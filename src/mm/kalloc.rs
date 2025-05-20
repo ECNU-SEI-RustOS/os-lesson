@@ -13,6 +13,19 @@ use crate::consts::{PGSIZE, LEAF_SIZE, PHYSTOP};
 use crate::spinlock::SpinLock;
 use super::list::List;
 
+/// 全局内核堆分配器。
+///
+/// 该静态变量实现了 Rust 的 [`GlobalAlloc`] 接口，
+/// 并通过 `#[global_allocator]` 标记为全局分配器，
+/// 用于为内核中的所有堆分配请求提供支持。
+///
+/// 它包装了一个基于伙伴系统（buddy system）的堆分配器 [`BuddySystem`]，
+/// 可在系统初始化早期通过 [`KernelHeap::kinit`] 完成堆空间的初始化，
+/// 从而管理内核可用的物理内存区间。
+///
+/// # 安全性
+///
+/// 在调用 `kinit()` 初始化之前，不应进行任何堆分配操作。
 #[global_allocator]
 pub static KERNEL_HEAP: KernelHeap = KernelHeap::uninit();
 
@@ -21,13 +34,61 @@ fn foo(layout: Layout) -> ! {
     panic!("alloc error: {:?}", layout)
 }
 
-/// Kernel heap allocator
+/// 内核堆分配器封装结构。
+///
+/// `KernelHeap` 是整个内核的堆内存分配器核心类型，
+/// 它通过内部封装一个加锁的 [`BuddySystem`]，
+/// 提供线程安全的堆内存分配与回收机制。
+///
+/// # 初始化
+///
+/// 在系统启动早期，应调用 [`KernelHeap::kinit`] 来初始化堆管理区间，
+/// 否则任何堆分配行为都将引发错误。
 pub struct KernelHeap(SpinLock<BuddySystem>);
 
 impl KernelHeap {
+    /// 创建一个未初始化状态的内核堆分配器。
+    ///
+    /// 该函数用于构造 `KernelHeap` 的初始实例，
+    /// 内部封装一个尚未初始化的 [`BuddySystem`]，并以 [`SpinLock`] 包裹，
+    /// 使其具备基本的线程安全能力。
+    ///
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回值
+    /// 返回一个处于未初始化状态的 `KernelHeap` 实例。
     const fn uninit() -> Self {
         Self(SpinLock::new(BuddySystem::uninit(), "kernel heap"))
     }
+
+    /// 初始化内核堆分配器。
+    ///
+    /// 在内核启动早期调用此函数，用于初始化整个内核堆的可用物理内存区域，
+    /// 其作用是将从链接脚本中 `_end` 符号（表示内核镜像末尾）
+    /// 到 `PHYSTOP` 之间的物理内存设置为可管理的堆空间。
+    ///
+    /// # 功能说明
+    ///
+    /// - 获取内核镜像结束地址 `_end` 作为起点，
+    ///   将区间 `[end, PHYSTOP)` 注册到内部伙伴系统中进行内存管理；
+    /// - 调用内部 `init()` 方法完成堆空间的初始化；
+    /// - 会打印可用内存区间和初始化完成提示信息。
+    ///
+    /// # 参数
+    ///
+    /// - `&self`：对当前 `KernelHeap` 分配器的不可变引用。
+    ///
+    /// # 返回值
+    ///
+    /// - 无返回值，函数执行完成后 `KernelHeap` 将处于可分配状态。
+    /// 
+    /// # 安全性
+    ///
+    /// - 本函数为 `unsafe`，因为直接从裸指针读取 `_end` 符号，
+    ///   并假设其值正确无误；
+    /// - 使用者必须确保仅调用一次，并在其他堆分配操作之前调用；
+    /// - 不应在初始化前使用任何需要堆内存的结构（如 `Box`、`Vec`）
 
     pub unsafe fn kinit(&self) {
         extern "C" {

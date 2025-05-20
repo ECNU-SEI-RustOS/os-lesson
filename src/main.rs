@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use xv6_riscv_rust;
+use xv6_rust;
