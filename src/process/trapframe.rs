@@ -1,14 +1,39 @@
+/// 用户进程的陷阱帧（Trap Frame）
+///
+/// 该结构体保存用户态程序在发生陷阱（系统调用、中断、异常）时的 CPU 寄存器上下文，
+/// 用于内核在进入和返回用户态时保存和恢复用户进程状态。
+/// 
+/// 在上下文切换、异常处理及系统调用处理中，
+/// 内核通过此结构体存储和恢复用户程序的执行现场，
+/// 保证用户程序能够正确继续执行。
 #[repr(C)]
 #[derive(Debug)]
 pub struct TrapFrame {
+    /// 内核页表的物理页目录基址 (SATP寄存器值)
     /*   0 */ pub kernel_satp: usize,   // kernel page table
+
+    /// 进程内核栈的栈顶虚拟地址
     /*   8 */ pub kernel_sp: usize,     // top of process's kernel stack
+    
+    /// 内核陷阱处理函数地址（如 `usertrap`）
     /*  16 */ pub kernel_trap: usize,   // usertrap()
+    
+    /// 用户程序计数器（程序执行到的下一条指令地址）
     /*  24 */ pub epc: usize,           // saved user program counter
+    
+    /// 内核线程指针寄存器（`tp`），保存当前 CPU ID
     /*  32 */ pub kernel_hartid: usize, // saved kernel tp
+    
+    /// 返回地址寄存器（`ra`）
     /*  40 */ pub ra: usize,
+    
+    /// 栈指针寄存器（`sp`）
     /*  48 */ pub sp: usize,
+    
+    /// 全局指针寄存器（`gp`）
     /*  56 */ pub gp: usize,
+    
+    /// 线程指针寄存器（`tp`）
     /*  64 */ pub tp: usize,
     /*  72 */ pub t0: usize,
     /*  80 */ pub t1: usize,

@@ -47,17 +47,6 @@ fn foo(layout: Layout) -> ! {
 pub struct KernelHeap(SpinLock<BuddySystem>);
 
 impl KernelHeap {
-    /// 创建一个未初始化状态的内核堆分配器。
-    ///
-    /// 该函数用于构造 `KernelHeap` 的初始实例，
-    /// 内部封装一个尚未初始化的 [`BuddySystem`]，并以 [`SpinLock`] 包裹，
-    /// 使其具备基本的线程安全能力。
-    ///
-    /// # 参数
-    /// 无
-    ///
-    /// # 返回值
-    /// 返回一个处于未初始化状态的 `KernelHeap` 实例。
     const fn uninit() -> Self {
         Self(SpinLock::new(BuddySystem::uninit(), "kernel heap"))
     }
@@ -89,7 +78,6 @@ impl KernelHeap {
     ///   并假设其值正确无误；
     /// - 使用者必须确保仅调用一次，并在其他堆分配操作之前调用；
     /// - 不应在初始化前使用任何需要堆内存的结构（如 `Box`、`Vec`）
-
     pub unsafe fn kinit(&self) {
         extern "C" {
             fn end();
@@ -100,32 +88,98 @@ impl KernelHeap {
         println!("KernelHeap: init memory done");
     }
 
-    /// Init the kernel heap allocator.
-    /// It should be called once when the kernel boots.
-    /// After initialization,
-    /// memory from [start, end) becomes heap in the kernel.
+    /// 初始化内核堆分配器的实现函数。
+    ///
+    /// 在内核启动过程中调用此函数，用于初始化伙伴系统分配器，
+    /// 将 `[start, end)` 范围内的物理内存注册为可管理的堆空间，
+    /// 并建立用于内存分配的元数据结构（如分配位图、分裂标记等）。
+    ///
+    /// # 功能说明
+    ///
+    /// - 加锁访问内部 [`BuddySystem`]，并调用其 `init()` 方法；
+    /// - 设置堆起始地址、对齐边界，并初始化所有管理元信息；
+    /// 
+    /// # 参数
+    ///
+    /// - `start`: 要加入堆管理的起始物理地址，通常为内核镜像结束地址；
+    /// - `end`: 要加入堆管理的结束物理地址，通常为物理内存上限（如 `PHYSTOP`）；
+    ///
+    /// # 返回值
+    ///
+    /// - 无返回值。函数执行成功后，内核堆分配器将处于可用状态。
     unsafe fn init(&self, start: usize, end: usize) {
         self.0.lock().init(start, end);
     }
 }
 
+/// 实现 `GlobalAlloc` 接口以支持全局堆分配。
+///
+/// 本实现使 `KernelHeap` 可以作为 Rust 全局分配器使用，
+/// 支持内核中 `Box`、`Vec` 等标准堆分配类型的底层内存管理。
+///
+/// `alloc` 和 `dealloc` 方法会加锁访问内部的 [`BuddySystem`] 分配器，
+/// 从而保证在多核环境下的线程安全。
 unsafe impl GlobalAlloc for KernelHeap {
+    /// # 功能说明
+    ///
+    /// - `alloc`：根据指定的内存布局分配堆空间；
+    /// 
+    /// # 参数
+    ///
+    /// - `layout`：一个 [`Layout`] 对象，指定分配或释放的内存大小与对齐；
+    /// # 返回值
+    ///
+    /// - `alloc` 返回一个满足给定 `layout` 的裸指针；若内存不足返回空指针；
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.0.lock().alloc(layout)
     }
 
+    /// # 功能说明
+    ///
+    /// - `dealloc`：释放由 `alloc` 分配的堆空间，并尝试进行伙伴合并；
+    /// # 参数
+    ///
+    /// - `layout`：一个 [`Layout`] 对象，指定分配或释放的内存大小与对齐；
+    /// - `ptr`：待释放的内存指针，必须来自之前分配的有效地址；
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         self.0.lock().dealloc(ptr, layout)
     }
 }
 
-struct BuddySystem {
-    base: usize,            // the starting addr managed by the buddy system
-    actual_end: usize,      // the actual end addr managed by the buddy system
-    nsizes: usize,          // the number of different sizes of blocks
+/// 伙伴系统内存分配器的核心结构。
+///
+/// `BuddySystem` 是内核堆分配器的底层实现，采用经典的伙伴系统算法，
+/// 将堆内存划分为以 2 的幂为大小的块，通过分裂和合并操作进行内存分配与回收。
+///
+/// 本结构记录了伙伴系统管理的内存范围、分配状态以及每个块大小等级的元信息，
+/// 并在初始化完成后提供线程安全的内存操作接口（通常由 [`KernelHeap`] 封装）。
+///
+/// 初始化通过 [`BuddySystem::init`] 方法完成，
+/// 分配与释放分别通过 `alloc()` 和 `dealloc()` 实现。
+pub struct BuddySystem {
+    /// 伙伴系统管理的起始物理地址（页对齐）。
+    base: usize,
+
+    /// 伙伴系统管理的实际结束地址（页对齐），不包括该地址本身。
+    actual_end: usize,
+
+    /// 支持的块大小等级数量，对应 log2(最大块数) + 1。
+    ///
+    /// 每个等级的块大小为 `2^k * LEAF_SIZE`。
+    nsizes: usize,
+
+    /// 标记该结构是否已完成初始化。
+    ///
+    /// 防止重复初始化，若已初始化再次调用 `init()` 将 panic。
     initialized: bool,
+
+    /// 每个块大小等级对应的分配状态和空闲链表信息。
+    ///
+    /// 该字段为指向 `BuddyInfo` 切片的裸指针，需在初始化过程中手动构造并写入。
+    /// 使用 `MaybeUninit` 包装，以避免未初始化内存的 UB。
     infos: MaybeUninit<*mut [BuddyInfo]>,
 }
+
 
 // since *mut [T] is not Send
 unsafe impl Send for BuddySystem {}
@@ -141,8 +195,40 @@ impl BuddySystem {
         }
     }
 
-    /// Init the buddy system allocator.
-    /// Note: It will align start and end to be page-aligned.
+    /// 初始化伙伴系统内存分配器。
+    ///
+    /// 将 `[start, end)` 范围内的物理内存划入内核堆空间，
+    /// 构造内部管理结构，包括空闲块链表、分配位图、分裂位图等，
+    /// 并对所有内存页进行页对齐处理。完成初始化后，即可通过该结构执行分配与释放操作。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 对传入的起始与结束地址进行页对齐，确定实际管理的堆内存区间；
+    /// - 根据堆大小计算支持的块大小等级（`nsizes`），并为每一级分配对应的 [`BuddyInfo`]；
+    /// - 为每一级块构造空闲链表（`free`）、分配状态位图（`alloc`）与分裂位图（`split`）；
+    /// - 标记元数据与不可用内存块，避免误分配；
+    /// - 初始化剩余内存为可分配区域，并检查内存总量一致性。
+    /// 
+    /// # 参数
+    ///
+    /// - `start`：堆管理区域的起始物理地址（不一定对齐）；
+    /// - `end`：堆管理区域的结束物理地址（不一定对齐，排除该地址本身）；
+    /// 
+    /// # 返回值
+    ///
+    /// - 无返回值。成功执行后，`BuddySystem` 即处于可用状态。
+    /// 
+    /// # 可能的错误
+    ///
+    /// - 如果该函数被重复调用，`self.initialized` 为 `true`，将 panic：`"buddy system: init twice"`；
+    /// - 若计算出的可用内存与期望值不一致，将 panic 并输出 meta/free/unavail 的差异；
+    /// - 如果 `cur` 超出 `[start, end)` 范围，会导致非法内存访问或后续错误行为。
+    /// 
+    /// # 安全性
+    ///
+    /// - 函数为 `unsafe`，调用者必须确保 `start` 和 `end` 地址合法、可访问，且位于物理内存边界之内；
+    /// - 本函数会修改大量裸内存并使用裸指针，必须保证在未使用该结构前完成一次性调用；
+    /// - 初始化完成后，该结构进入不变式维护状态，不应再次调用该函数。
     unsafe fn init(&mut self, start: usize, end: usize) {
         if self.initialized {
             panic!("  buddy system: init twice");
@@ -216,7 +302,37 @@ impl BuddySystem {
         self.initialized = true;
     }
 
-    /// Allocate a block of memory satisifying the layout.
+    /// 根据给定的内存布局分配一个内存块。
+    ///
+    /// 使用伙伴系统算法，从空闲块链表中查找并分配一个满足 `layout` 要求的内存块，
+    /// 如有必要会进行更大块的拆分操作以获得适配的最小可用块。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 根据 `layout.size()` 和 `layout.align()`，计算所需的最小块等级；
+    /// - 从空闲链表中查找第一个满足要求的块，如无可用块则返回空指针；
+    /// - 若找到的块大于所需大小，则逐层拆分，释放多余的 buddy 到更小一级的空闲链表；
+    /// - 最终返回一个满足大小和对齐要求的裸指针。
+    /// 
+    /// # 参数
+    ///
+    /// - `layout`: [`Layout`] 类型，指定所需内存块的大小与对齐要求。
+    /// 
+    /// # 返回值
+    ///
+    /// - 成功时返回一个指向所分配内存块的裸指针；
+    /// - 如果内存不足或找不到满足要求的块，返回 `null_mut()`。
+    /// 
+    /// # 可能的错误
+    ///
+    /// - 若 `layout.align()` 大于页大小（`PGSIZE`），将触发 panic；
+    /// - 若分配失败（例如所有块都已用尽），返回空指针；
+    /// 
+    /// # 安全性
+    ///
+    /// - 返回的指针未初始化，使用者需确保在使用前正确初始化内容；
+    /// - 返回指针的生命周期由调用者负责，必须由对应的 `dealloc` 手动释放；
+    /// - 分配器内部使用了裸指针与不安全内存操作，依赖正确初始化与不变式维护；
     fn alloc(&mut self, layout: Layout) -> *mut u8 {
         if layout.size() == 0 {
             return ptr::null_mut()
@@ -277,8 +393,41 @@ impl BuddySystem {
         raw_addr as *mut u8
     }
 
-    /// Deallocate the memory.
-    /// SAFETY: The raw ptr passed-in should be the one handed out previously.
+    /// 释放先前分配的内存块，并尝试进行伙伴合并。
+    ///
+    /// 根据给定的指针与内存布局信息，从伙伴系统中回收对应内存块，
+    /// 若发现其伙伴块未被分配，则递归合并为更大一级的块，以减少碎片。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 检查传入的 `ptr` 是否在管理范围内；
+    /// - 通过 `split` 位图回推该内存块的分配等级；
+    /// - 验证传入的布局是否匹配当前块大小；
+    /// - 清除当前块的分配位，并与其伙伴尝试合并；
+    /// 
+    /// # 参数
+    ///
+    /// - `ptr`: 一个先前由 `alloc()` 返回的裸指针；
+    /// - `layout`: 与原分配请求一致的 [`Layout`] 对象，指定大小和对齐；
+    /// 
+    /// # 返回值
+    ///
+    /// - 无返回值，函数执行后目标内存块被成功释放或合并回更大块；
+    /// 
+    /// # 可能的错误
+    ///
+    /// - 若 `ptr` 不在合法的堆地址范围内，则 panic：`"dealloc ptr out of range"`；
+    /// - 若找不到该内存块对应的分裂标记，则 panic：`"dealloc cannot recycle ptr"`；
+    /// - 若传入 `layout.size()` 大于当前块大小，则 panic，表示回收参数与分配不匹配；
+    /// 
+    /// # 安全性
+    ///
+    /// - 调用方必须保证传入的 `ptr` 是由当前分配器之前分配得到，
+    ///   否则可能导致内存破坏；
+    /// - `layout` 必须与原始分配请求完全一致；
+    /// - 函数内部包含大量裸指针操作和不安全强制转换，依赖正确初始化和结构不变式；
+    ///
+    /// [`Layout`]: core::alloc::Layout
     fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         // check ptr in range [self.base, self.actual_end)
         let mut raw_addr = ptr as usize;
@@ -334,8 +483,25 @@ impl BuddySystem {
         unsafe { info.free.push(raw_addr); }
     }
 
-    /// Mark meta data of buddy system as used.
-    /// [self.base, cur)
+    /// 标记伙伴系统用于元数据存储的内存区间为“已占用”状态。
+    ///
+    /// 本函数在初始化阶段调用，表示从堆起始地址 `base` 到当前指针 `cur` 之间的内存被用于
+    /// 存储 allocator 的内部数据结构（如 `BuddyInfo`、位图、链表头等），
+    /// 因此这些内存块不应被后续的分配器再利用。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 计算元数据区域的大小，即 `[self.base, cur)` 区间；
+    /// - 调用 [`mark`] 函数，将该内存区间在所有等级上标记为已分配；
+    /// - 返回该区域占用的字节数，供后续一致性校验使用（如和可用块大小总和对比）；
+    /// 
+    /// # 参数
+    ///
+    /// - `cur`: 元数据区域的结束地址（不包含），应当在 `init()` 阶段动态计算得出；
+    /// 
+    /// # 返回值
+    ///
+    /// - `usize`：表示元数据区域的大小（以字节计），即 `cur - self.base`。
     fn mark_meta(&mut self, cur: usize) -> usize {
         let meta = cur - self.base;
         println!("  buddy system: alloc {:#x} bytes meta data", meta);
@@ -343,8 +509,26 @@ impl BuddySystem {
         meta
     }
 
-    /// Mark unavailable data due to the requirement,
-    /// that the size of buddy system should be a power of 2.
+    /// 标记由于对齐要求而不可用的内存区域为“已占用”状态。
+    ///
+    /// Buddy System 要求管理的总内存大小为 2 的幂，因此实际可用内存 `[base, actual_end)`
+    /// 可能小于向上对齐后的总管理大小 `blk_size(max_size)`，
+    /// 多出的这部分内存（即 `[actual_end, base + blk_size(max_size))`）
+    /// 被视为不可分配区域，应当显式标记为“已占用”，以防被误用。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 计算由于 2 的幂对齐造成的不可用内存大小；
+    /// - 使用 [`mark`] 函数将该不可用区域标记为“已占用”状态；
+    /// - 返回该区域的字节大小，用于后续校验（如总内存一致性检查）；
+    /// 
+    /// # 参数
+    ///
+    /// - 无参数。函数内部依赖于 `self.base`、`self.actual_end` 和 `self.max_size()` 的状态；
+    /// 
+    /// # 返回值
+    ///
+    /// - `usize`：被标记为不可用的内存大小（以字节计）；
     fn mark_unavail(&mut self) -> usize {
         let unavail = blk_size(self.max_size()) - (self.actual_end - self.base);
         println!("  buddy system: {:#x} bytes unavailable", unavail);
@@ -352,8 +536,31 @@ impl BuddySystem {
         unavail
     }
 
-    /// Mark memory from [left, right) as allocated.
-    /// Useful for meta and unavailable data.
+    /// 将指定内存区间标记为“已占用”，用于元数据区域或不可用空间。
+    ///
+    /// 该函数在内存初始化阶段被调用，通常用于标记：
+    /// - 元数据所占内存（如位图、链表结构等）
+    /// - 由于对齐原因不能使用的尾部内存
+    ///
+    /// 它会遍历所有大小等级，并在每一级中将 `[left, right)` 区间覆盖的块标记为已分配，
+    /// 并在大于 0 的等级中设置这些块的 `split` 位，防止后续错误合并。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 遍历每个 sizei 等级（从小到大），计算该等级下 `[left, right)` 覆盖的块索引范围；
+    /// - 对每个被覆盖的块：
+    ///   - 设置其分配位（`alloc`）
+    ///   - 若 sizei > 0，还设置其分裂位（`split`）
+    /// - 这样这些块在分配或合并时将被跳过，不会误认为是空闲块。
+    /// 
+    /// # 参数
+    ///
+    /// - `left`: 需要标记为占用的起始地址，必须是 `LEAF_SIZE` 对齐；
+    /// - `right`: 标记区间的结束地址（不包括该地址），也必须是 `LEAF_SIZE` 对齐；
+    /// 
+    /// # 返回值
+    ///
+    /// - 无返回值。执行后，`[left, right)` 区间所映射的所有块将在所有等级上被视为“已分配”。
     fn mark(&mut self, left: usize, right: usize) {
         assert_eq!(left % LEAF_SIZE, 0);
         assert_eq!(right % LEAF_SIZE, 0);
@@ -376,8 +583,25 @@ impl BuddySystem {
         }
     }
 
-    /// Init free regions between [left, self.actual_end).
-    /// Must be called after marking meta and unavail data.
+    /// 初始化 `[left, actual_end)` 区间内可分配的空闲块，并将其插入对应等级的 free list。
+    ///
+    /// 该函数在初始化阶段调用，前提是元数据区域与不可用区域已经通过 [`mark`] 标记为“已占用”，
+    /// 本函数将其余未被占用的内存区间转换为合法的空闲块，并放入适当的 free list 中，
+    /// 从而构建初始的空闲内存池。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 遍历每个大小等级 `sizei`，尝试将 `[left, actual_end)` 范围内的空闲块加入 free list；
+    /// - 对每个等级，调用 [`init_free_pair`] 尝试将未被占用、无法合并的 buddy 对作为独立块插入；
+    /// - 返回总共插入的空闲字节数，用于与元数据与不可用内存对账；
+    /// 
+    /// # 参数
+    ///
+    /// - `left`: 可用区域的起始地址（必须已经跳过元数据与不可用区域）；
+    /// 
+    /// # 返回值
+    ///
+    /// - `usize`：成功插入到 free list 的空闲内存总字节数；
     fn init_free(&mut self, left: usize) -> usize {
         let right = self.actual_end;
         let mut free = 0;
@@ -392,7 +616,28 @@ impl BuddySystem {
         free
     }
 
-    /// Push a buddy into the list if it cannot be coalesce and upgrade.
+    /// 初始化一对 buddy 块中的空闲块，并将其加入对应等级的 free list。
+    ///
+    /// 在初始化空闲内存时，遍历每一对 buddy（相邻的两个块），
+    /// 若发现一块是空闲的而另一块已被标记为分配（如元数据或不可用区域），
+    /// 则将空闲的那一块加入到对应等级的 free list 中，
+    /// 从而避免错误合并并确保初始状态下的 free list 只包含真正可用的块。
+    /// 
+    /// # 功能说明
+    ///
+    /// - 计算当前块 `bi` 与其 buddy 的编号 `buddyi`；
+    /// - 获取它们对应的物理地址，并检查它们的 `alloc` 位状态；
+    /// - 如果这对 buddy 中只有一块是空闲的，则将该空闲块的地址加入 `free list[sizei]`；
+    /// - 返回此次操作所插入的空闲块大小（单位：字节），否则返回 0 表示未插入；
+    /// 
+    /// # 参数
+    ///
+    /// - `sizei`: 当前块所属的大小等级，对应块大小为 `2^sizei * LEAF_SIZE`；
+    /// - `bi`: 当前块在该等级中的块索引；
+    /// 
+    /// # 返回值
+    ///
+    /// - `usize`：此次插入的空闲块大小，若未插入任何块则返回 0；
     fn init_free_pair(&mut self, sizei: usize, bi: usize) -> usize {
         let buddyi = if bi % 2 == 0 { bi+1 } else { bi-1 };
         let blk_addr_bi = self.blk_addr(sizei, bi);
