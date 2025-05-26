@@ -16,21 +16,70 @@ mod pipe;
 
 pub use pipe::Pipe;
 
-/// File abstraction above inode.
-/// It can represent regular file, device and pipe.
+/// 表示内核中的文件抽象结构，构建在 inode 之上。
+///
+/// `File` 类型用于统一表示三类文件实体：常规文件（regular file）、设备文件（device）、以及管道（pipe）。
+/// 它封装了底层 inode 结构，并通过 `FileInner` 枚举区分实际文件类型。`File` 是用户进程打开文件后在内核态持有的资源，
+/// 支持对文件的读写与状态获取等操作，同时在文件关闭时自动释放 inode 或关闭管道端口。
+///
+/// ### 使用注意：
+/// - `File` 使用 `Arc<File>` 管理引用计数，便于在多个线程之间共享；
+/// - 文件偏移量通过内部结构中的 `UnsafeCell` 表示，由 inode 锁进行同步；
+/// - 打开文件后需调用 `drop` 或将 `Arc` 释放，以触发 inode 或资源的正确回收。
 #[derive(Debug)]
 pub struct File {
+    /// 封装文件内部数据，区分是常规文件、管道还是设备。
     inner: FileInner,
+
+    /// 标志该文件是否支持读取操作。
     readable: bool,
+
+    /// 标志该文件是否支持写入操作。
     writable: bool,
 }
+
 
 unsafe impl Send for File {}
 unsafe impl Sync for File {}
 
 impl File {
-    /// Open a file and optionally create a regular file.
-    /// LTODO - avoid stack allocation by Arc::new - consider box syntax?
+    /// 打开指定路径的文件，并根据传入的标志位决定是否创建新文件。
+    ///
+    /// # 功能说明
+    /// 该函数提供文件打开功能，支持对常规文件、目录、设备文件进行统一处理。
+    /// 若传入 `O_CREATE` 标志，则尝试在路径不存在时创建新文件；否则尝试查找并打开已有文件。
+    /// 对于不同类型的 inode，会构造对应的 `FileInner` 实例并初始化可读/可写标志。
+    ///
+    /// # 流程解释
+    /// 1. 启动日志操作（`LOG.begin_op()`），以保障文件系统操作的一致性；
+    /// 2. 若指定 `O_CREATE`，尝试使用 `ICACHE.create()` 创建普通文件；
+    ///    否则通过 `ICACHE.namei()` 查找现有文件；
+    /// 3. 根据 inode 类型判断处理逻辑：
+    ///    - 若为 `Directory`，只允许 `O_RDONLY` 打开；
+    ///    - 若为 `File`，根据 `O_TRUNC` 标志判断是否截断文件；
+    ///    - 若为 `Device`，检查 major 编号合法性并封装为设备文件；
+    /// 4. 构造 `File` 结构体并返回其 `Arc` 包装；
+    /// 5. 所有路径在出错时需释放 inode 并结束日志操作。
+    ///
+    /// # 参数
+    /// - `path`: 文件路径，使用字节数组形式表示（如 C 字符串）；
+    /// - `flags`: 打开标志，支持组合位，如 `O_CREATE`, `O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_TRUNC` 等。
+    ///
+    /// # 返回值
+    /// - `Some(Arc<File>)`：打开成功时，返回封装的文件对象；
+    /// - `None`：打开或创建文件失败时返回。
+    ///
+    /// # 可能的错误
+    /// - 路径不存在且未指定 `O_CREATE`；
+    /// - 创建文件失败（如目录不存在或权限问题）；
+    /// - 尝试以非只读方式打开目录；
+    /// - 打开设备文件但 major 编号非法；
+    /// - 日志事务未正确结束（通过提前 return 路径确保处理）。
+    ///
+    /// # 安全性
+    /// - 使用 `Arc<File>` 保证跨线程安全共享；
+    /// - `offset` 字段通过 `UnsafeCell` 表示内部可变性，由 inode 锁保护并发访问；
+    /// - inode 在函数内生命周期受控，出错路径确保正确释放资源与日志。
     pub fn open(path: &[u8], flags: i32) -> Option<Arc<Self>> {
         LOG.begin_op();
 
