@@ -80,27 +80,18 @@ mkfs/mkfs: mkfs/mkfs.c $(INCLUDE)/fs.h $(INCLUDE)/param.h
 # that disk image changes after first build are persistent until clean.  More
 # details:
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
+
+TARGET_DIR_C := user
+
+# 使用 wildcard 匹配文件
+USER_C_FILES := $(wildcard $(TARGET_DIR_C)/*.c)
+USER_PRO_BIN := $(patsubst $(TARGET_DIR_C)/%.c,$(TARGET_DIR_C)/_%,$(USER_C_FILES))
 .PRECIOUS: %.o
 
-UPROGS=\
-	$(USER)/_cat\
-	$(USER)/_echo\
-	$(USER)/_forktest\
-	$(USER)/_grep\
-	$(USER)/_init\
-	$(USER)/_kill\
-	$(USER)/_ln\
-	$(USER)/_ls\
-	$(USER)/_mkdir\
-	$(USER)/_rm\
-	$(USER)/_sh\
-	$(USER)/_stressfs\
-	$(USER)/_usertests\
-	$(USER)/_grind\
-	$(USER)/_wc\
-	$(USER)/_zombie\
+UPROGS=$(USER_PRO_BIN)
 
 fs.img: mkfs/mkfs README.md $(UPROGS)
 	mkfs/mkfs fs.img README.md $(UPROGS)
-
+show:
+	@echo $(USER_PRO_BIN)
 -include user/*.d
