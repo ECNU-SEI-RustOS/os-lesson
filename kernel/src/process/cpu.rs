@@ -139,7 +139,7 @@ impl CpuManager {
     ///
     pub unsafe fn scheduler(&mut self) -> ! {
         extern "C" {
-            fn swtch(old: *mut Context, new: *mut Context);
+            fn switch(old: *mut Context, new: *mut Context);
         }
 
         let c = self.my_cpu_mut();
@@ -155,7 +155,7 @@ impl CpuManager {
                     let mut guard = p.excl.lock();
                     guard.state = ProcState::RUNNING;
 
-                    swtch(&mut c.scheduler as *mut Context,
+                    switch(&mut c.scheduler as *mut Context,
                         p.data.get_mut().get_context());
                     
                     if c.proc.is_null() {
@@ -244,7 +244,7 @@ impl Cpu {
         -> SpinLockGuard<'a, ProcExcl>
     {
         extern "C" {
-            fn swtch(old: *mut Context, new: *mut Context);
+            fn switch(old: *mut Context, new: *mut Context);
         }
 
         // interrupt is off
@@ -265,7 +265,7 @@ impl Cpu {
         }
 
         let intena = self.intena;
-        swtch(ctx, &mut self.scheduler as *mut Context);
+        switch(ctx, &mut self.scheduler as *mut Context);
         self.intena = intena;
 
         guard

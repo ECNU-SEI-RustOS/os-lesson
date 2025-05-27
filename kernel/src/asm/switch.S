@@ -1,7 +1,7 @@
-# Context Switch: swtch(old: *mut Context, new: *mut Context)
+# Context Switch: switch(old: *mut Context, new: *mut Context)
 
-.globl swtch
-swtch:
+.globl switch
+switch:
     sd ra, 0(a0)
     sd sp, 8(a0)
     sd s0, 16(a0)
