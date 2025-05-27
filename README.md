@@ -13,6 +13,7 @@ make fs.img
 ```
 2. Run:
 ```
+cd kernel
 cargo run
 ```
 
