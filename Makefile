@@ -1,5 +1,6 @@
-KERNEL = target/riscv64gc-unknown-none-elf/debug/xv6-rust
+KERNEL = kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
+USER_C_TARGET = $(USER)/target
 INCLUDE = include
 CPUS = 3
 
@@ -35,7 +36,7 @@ qemu-gdb: $(KERNEL) fs.img
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
 $(KERNEL):
-	cargo build
+	cd kernel && cargo build
 
 asm: $(KERNEL)
 	$(OBJDUMP) -S $(KERNEL) > kernel.S
@@ -86,9 +87,11 @@ TARGET_DIR_C := user
 # 使用 wildcard 匹配文件
 USER_C_FILES := $(wildcard $(TARGET_DIR_C)/*.c)
 USER_PRO_BIN := $(patsubst $(TARGET_DIR_C)/%.c,$(TARGET_DIR_C)/_%,$(USER_C_FILES))
+UPROGS=$(USER_PRO_BIN)
+
+
 .PRECIOUS: %.o
 
-UPROGS=$(USER_PRO_BIN)
 
 fs.img: mkfs/mkfs README.md $(UPROGS)
 	mkfs/mkfs fs.img README.md $(UPROGS)
