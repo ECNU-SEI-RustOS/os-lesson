@@ -42,7 +42,7 @@ asm: $(KERNEL)
 
 clean:
 	rm -rf kernel.S
-	cargo clean
+	cd kernel && cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
 	mkfs/mkfs $(USER)/usys.S \
