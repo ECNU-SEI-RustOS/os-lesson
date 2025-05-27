@@ -49,7 +49,7 @@ pub unsafe fn rust_main() -> ! {
     if cpuid == 0 {
         console::init();
         println!();
-        println!("xv6-riscv-rust is booting");
+        println!("xv6-rust is booting");
         println!();
         KERNEL_HEAP.kinit();
         kvm_init(); // init kernel page table

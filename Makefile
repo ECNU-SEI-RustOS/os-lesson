@@ -1,4 +1,4 @@
-KERNEL = target/riscv64gc-unknown-none-elf/debug/xv6-riscv-rust
+KERNEL = target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
 INCLUDE = include
 CPUS = 3
