@@ -1,6 +1,5 @@
-use super::write;
 use core::{fmt::{self, Write}};
-use crate::read;
+use crate::{write,read};
 struct Stdout;
 
 const STDOUT: usize = 1;

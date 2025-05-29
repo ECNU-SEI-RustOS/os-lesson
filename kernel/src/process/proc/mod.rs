@@ -520,6 +520,8 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+
+            99 => self.sys_test(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }

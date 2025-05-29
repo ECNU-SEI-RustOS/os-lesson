@@ -1,4 +1,4 @@
-use super::{getpid, kill, SIGABRT};
+use super::{getpid, kill};
 
 #[panic_handler]
 fn panic_handler(panic_info: &core::panic::PanicInfo) -> ! {
@@ -13,6 +13,6 @@ fn panic_handler(panic_info: &core::panic::PanicInfo) -> ! {
     }
     // 打印 panic 消息（如果有）
     println!("Error: {}", panic_info.message());
-    kill(getpid() as usize, SIGABRT);
+    kill(getpid());
     unreachable!()
 }

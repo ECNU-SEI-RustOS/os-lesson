@@ -38,9 +38,14 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_test(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
+    fn sys_test(&mut self) -> SysResult{
+        kinfo!("{} {} ", self.arg_raw(0),self.arg_raw(1));
+        Result::Ok(1)
+    }
     /// Redirect to [`Proc::fork`].
     ///
     /// [`Proc::fork`]: Proc::fork
@@ -332,7 +337,7 @@ impl Syscall for Proc {
     }
 
     /// Write user content to file descriptor.
-    /// Return the conut of bytes written.
+    /// Return the count of bytes written.
     fn sys_write(&mut self) -> SysResult {
         let fd = self.arg_fd(0)?;
         let user_addr = self.arg_addr(1);

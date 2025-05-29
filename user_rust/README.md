@@ -87,5 +87,79 @@ fn syscall(id: usize, args: [usize; 3]) -> isize {
 }
 ```
 
+## rust程序链接代码
+
+```
+
+#[no_mangle]
+#[link_section = ".text.entry"]
+pub extern "C" fn _start(argc: usize, argv: usize) -> ! {
+    unsafe {
+        HEAP.lock()
+            .init(HEAP_SPACE.as_ptr() as usize, USER_HEAP_SIZE);
+    }
+    let mut v: Vec<&'static str> = Vec::new();
+    for i in 0..argc{
+        let str_start = unsafe {
+            ((argv + i * core::mem::size_of::<usize>()) as * const usize).read_volatile()
+        };
+        let len = (0usize..)
+            .find(|i| unsafe{((str_start + *i) as *const u8).read_volatile() == 0})
+            .unwrap();
+        v.push(
+            core::str::from_utf8(
+                unsafe {
+                    core::slice::from_raw_parts(str_start as *const u8, len)
+                }
+            )
+            .unwrap()
+        );
+    }
+    exit(main(argc,v.as_slice()));
+    panic!("unreachable after sys_exit!");
+}
+
+#[linkage = "weak"]
+#[no_mangle]
+fn main(_argc:usize, _argv:&[&str]) -> i32 {
+    panic!("Cannot find main!");
+}
+
+@linker.ld
+
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+
+BASE_ADDRESS = 0x10000;
+
+SECTIONS
+{
+    . = BASE_ADDRESS;
+    .text : {
+        *(.text.entry)
+        *(.text .text.*)
+    }
+    . = ALIGN(4K);
+    .rodata : {
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+    }
+    . = ALIGN(4K);
+    .data : {
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+    }
+    .bss : {
+        *(.bss .bss.*)
+        *(.sbss .sbss.*)
+    }
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.debug*)
+    }
+}
+
+```
+
 
 

@@ -60,3 +60,21 @@ pub extern "C" fn _start(argc: usize, argv: usize) -> ! {
 fn main(_argc:usize, _argv:&[&str]) -> i32 {
     panic!("Cannot find main!");
 }
+
+
+pub fn write(fd: usize, buf: &[u8]) -> isize {
+    sys_write(fd, buf)
+}
+pub fn read(fd:usize, buf: &mut [u8])->isize{
+    sys_read(fd, buf)
+}
+pub fn exit(exit_code: i32) -> ! {
+    sys_exit(exit_code)
+}
+pub fn getpid() -> isize {
+    sys_getpid()
+}
+pub fn kill(pid: isize) -> isize{
+    sys_kill(pid)
+}
+
