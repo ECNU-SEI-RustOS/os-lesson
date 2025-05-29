@@ -47,13 +47,14 @@ clean:
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
 	mkfs/mkfs $(USER)/usys.S \
-	$(UPROGS)
+	$(UPROGS) \
+	$(UPROGS_RUST)
 
-$(USER)/initcode: $(USER)/initcode.S
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Iinclude -c $(USER)/initcode.S -o $(USER)/initcode.o
-	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $(USER)/initcode.out $(USER)/initcode.o
-	$(OBJCOPY) -S -O binary $(USER)/initcode.out $(USER)/initcode
-	$(OBJDUMP) -S $(USER)/initcode.o > $(USER)/initcode.asm
+# $(USER)/initcode: $(USER)/initcode.S
+# 	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Iinclude -c $(USER)/initcode.S -o $(USER)/initcode.o
+# 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $(USER)/initcode.out $(USER)/initcode.o
+# 	$(OBJCOPY) -S -O binary $(USER)/initcode.out $(USER)/initcode
+# 	$(OBJDUMP) -S $(USER)/initcode.o > $(USER)/initcode.asm
 
 ULIB = $(USER)/ulib.o $(USER)/usys.o $(USER)/printf.o $(USER)/umalloc.o
 
@@ -86,15 +87,24 @@ TARGET_DIR_C := user
 
 # 使用 wildcard 匹配文件
 USER_C_FILES := $(wildcard $(TARGET_DIR_C)/*.c)
-USER_PRO_BIN := $(patsubst $(TARGET_DIR_C)/%.c,$(TARGET_DIR_C)/_%,$(USER_C_FILES))
-UPROGS=$(USER_PRO_BIN)
+USER_C_PRO_BIN := $(patsubst $(TARGET_DIR_C)/%.c,$(TARGET_DIR_C)/_%,$(USER_C_FILES))
+UPROGS =$(USER_C_PRO_BIN)
 
-
+TARGET_DIR_RUST := user_rust
+# 使用 wildcard 匹配文件
+USER_RUST_FILES := $(wildcard $(TARGET_DIR_RUST)/src/bin/*.rs)
+USER_RUST_PRO_BIN := $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(USER_RUST_FILES))
+UPROGS_RUST =  $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,user/_%,$(USER_RUST_FILES))
 .PRECIOUS: %.o
 
+user_rust_build:
+	cd user_rust && $(MAKE) build
+	$(foreach file,$(UPROGS_RUST),\
+		cp  $(patsubst user/_%,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(file)) $(file);  \
+	)
 
-fs.img: mkfs/mkfs README.md $(UPROGS)
-	mkfs/mkfs fs.img README.md $(UPROGS)
+fs.img: mkfs/mkfs README.md $(UPROGS) user_rust_build
+	mkfs/mkfs fs.img README.md $(UPROGS) $(UPROGS_RUST)
 show:
-	@echo $(USER_PRO_BIN)
+	@echo $(UPROGS_RUST)
 -include user/*.d
