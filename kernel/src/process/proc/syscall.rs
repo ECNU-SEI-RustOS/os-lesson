@@ -289,10 +289,7 @@ impl Syscall for Proc {
 
     /// Put the current process into sleep.
     fn sys_sleep(&mut self) -> SysResult {
-        let count = self.arg_i32(0);
-        if count < 0 {
-            return Err(())
-        }
+        let count = self.arg_raw(0);
         let count = count as usize;
         let ret = trap::clock_sleep(self, count);
 
