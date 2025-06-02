@@ -65,10 +65,19 @@ macro_rules! kinfo {
         $crate::print!(concat!("\x1b[34m",concat!( $fmt , "\x1b[0m\n")), $($arg)*)
     };
 }
+#[macro_export]
+macro_rules! kerror {
+    () => {$crate::print!("\n")};
+    ($fmt:expr) => {$crate::print!(concat!("\x1b[31m" ,concat!( $fmt, "\x1b[0m\n")))};
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::print!(concat!("\x1b[31m",concat!( $fmt , "\x1b[0m\n")), $($arg)*)
+    };
+}
+
 
 #[panic_handler]
 fn panic(info: &panic::PanicInfo<'_>) -> ! {
-    crate::println!("{}", info);
+    crate::kerror!("{}\n", info);
     PANICKED.store(true, Ordering::Relaxed);
     loop {}
 }
