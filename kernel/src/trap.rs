@@ -3,9 +3,9 @@
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{PROC_MANAGER, Proc}};
+use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{Proc, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
-    scause::{self, ScauseType}};
+    scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
 use crate::spinlock::SpinLock;
 use crate::plic;
@@ -33,8 +33,10 @@ pub unsafe extern fn user_trap() {
 
     let p = CPU_MANAGER.my_proc();
 
-    match scause::get_scause() {
-        ScauseType::IntSExt => {
+    let scause = Scause::read();
+
+    match scause.cause() {
+        Trap::Interrupt(scause::Interrupt::SupervisorExternal) => {
             // this is a supervisor external interrupt, via PLIC.
 
             let irq = plic::claim();
@@ -43,7 +45,7 @@ pub unsafe extern fn user_trap() {
             } else if irq as usize == VIRTIO0_IRQ {
                 DISK.lock().intr();
             } else {
-                // panic!("unexpected interrupt, irq={}", irq);
+                panic!("unexpected interrupt, irq={}", irq);
             }
             if irq > 0 {
                 plic::complete(irq);
@@ -51,10 +53,10 @@ pub unsafe extern fn user_trap() {
 
             p.check_abondon(-1);
         }
-        ScauseType::IntSSoft => {
+        Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
             // forwarded by timervec in kernelvec.S.
-
+            kinfo!("[kernel] time interrupt\n");
             // only cpu 0 inc ticks
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
@@ -67,13 +69,13 @@ pub unsafe extern fn user_trap() {
             p.check_abondon(-1);
             p.yielding();
         }
-        ScauseType::ExcUEcall => {
+        Trap::Exception(scause::Exception::UserEnvCall)=> {
             p.check_abondon(-1);
             p.syscall();
             p.check_abondon(-1);
         }
-        ScauseType::Unknown => {
-            println!("scause {:#x}", scause::read());
+        _ => {
+            println!("scause {:?}", scause.cause());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
             p.abondon(-1);
         }
@@ -122,8 +124,10 @@ pub unsafe fn kerneltrap() {
         panic!("interrupts enabled");
     }
 
-    match scause::get_scause() {
-        ScauseType::IntSExt => {
+    let scause = Scause::read();
+
+    match scause.cause() {
+        Trap::Interrupt(Interrupt::SupervisorExternal)=> {
             // this is a supervisor external interrupt, via PLIC.
 
             let irq = plic::claim();
@@ -138,7 +142,7 @@ pub unsafe fn kerneltrap() {
                 plic::complete(irq);
             }
         }
-        ScauseType::IntSSoft => {
+        Trap::Interrupt(Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
             // forwarded by timervec in kernelvec.S.
 
@@ -153,11 +157,11 @@ pub unsafe fn kerneltrap() {
             // give up the cpu
             CPU_MANAGER.my_cpu_mut().try_yield_proc();
         }
-        ScauseType::ExcUEcall => {
+        Trap::Exception(Exception::UserEnvCall)=> {
             panic!("ecall from supervisor mode");
         }
-        ScauseType::Unknown => {
-            println!("scause {:#x}", scause::read());
+        _ => {
+            println!("scause {:?}", scause.cause());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
             panic!("unknown trap type");
         }
