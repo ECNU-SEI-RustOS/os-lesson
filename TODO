@@ -1,0 +1,2 @@
+1. sys_sleep (系统中的线程sleep会卡住)
+2. make fs.img 所输入的文件有上限
