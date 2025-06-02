@@ -2,18 +2,22 @@
 #![feature(linkage)]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+#![feature(allow_internal_unstable)]
 #[macro_use]
-pub mod console;
-mod lang_items;
-mod syscall;
+pub mod macros;
+mod panic;
+pub mod task;
+pub mod io;
+pub mod ralloc;
+pub mod file;
 
 extern crate alloc;
-#[macro_use]
-extern crate bitflags;
+extern crate syscall_riscv;
 
+use syscall_riscv::*;
 use alloc::vec::Vec;
 use buddy_system_allocator::LockedHeap;
-use syscall::*;
+
 
 const USER_HEAP_SIZE: usize = 32768;
 
@@ -52,7 +56,6 @@ pub extern "C" fn _start(argc: usize, argv: usize) -> ! {
         );
     }
     exit(main(argc,v.as_slice()));
-    panic!("unreachable after sys_exit!");
 }
 
 #[linkage = "weak"]
@@ -60,21 +63,7 @@ pub extern "C" fn _start(argc: usize, argv: usize) -> ! {
 fn main(_argc:usize, _argv:&[&str]) -> i32 {
     panic!("Cannot find main!");
 }
-
-
-pub fn write(fd: usize, buf: &[u8]) -> isize {
-    sys_write(fd, buf)
-}
-pub fn read(fd:usize, buf: &mut [u8])->isize{
-    sys_read(fd, buf)
-}
 pub fn exit(exit_code: i32) -> ! {
     sys_exit(exit_code)
-}
-pub fn getpid() -> isize {
-    sys_getpid()
-}
-pub fn kill(pid: isize) -> isize{
-    sys_kill(pid)
 }
 
