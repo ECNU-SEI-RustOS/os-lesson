@@ -53,6 +53,10 @@ pub unsafe extern fn user_trap() {
 
             p.check_abondon(-1);
         }
+        Trap::Interrupt(scause::Interrupt::SupervisorTimer) => {
+            //kinfo!("time intr");
+            unimplemented!("time intr");
+        }
         Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
             // forwarded by timervec in kernelvec.S.
