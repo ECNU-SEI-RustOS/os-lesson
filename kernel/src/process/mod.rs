@@ -453,7 +453,7 @@ impl ProcManager {
         let mut exit_pexcl = self.table[exit_pi].excl.lock();
         exit_pexcl.exit_status = exit_status;
         exit_pexcl.state = ProcState::ZOMBIE;
-        kinfo!("[kernel] process exit successfully ");
+        //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
         unsafe {
             let exit_ctx = self.table[exit_pi].data.get().as_mut().unwrap().get_context();
