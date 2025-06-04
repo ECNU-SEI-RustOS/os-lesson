@@ -8,6 +8,8 @@ pub mod sie;
 pub mod sip;
 pub mod sstatus;
 pub mod scause;
+#[macro_use]
+mod macros;
 
 /// medeleg
 pub mod medeleg {
