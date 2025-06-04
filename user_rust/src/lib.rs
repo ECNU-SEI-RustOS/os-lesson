@@ -10,6 +10,7 @@ pub mod task;
 pub mod io;
 pub mod ralloc;
 pub mod file;
+pub mod time;
 
 extern crate alloc;
 extern crate syscall_riscv;

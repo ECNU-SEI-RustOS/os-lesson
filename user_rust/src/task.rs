@@ -19,6 +19,6 @@ pub fn wait(exit_code: &mut i32) -> isize {
     sys_wait(exit_code as *mut i32 as *mut usize)
 }
 
-pub fn sleep(sleep_ms: usize) {
-    sys_sleep(sleep_ms);
+pub fn sleep(ticks: usize) {
+    sys_sleep(ticks);
 }
