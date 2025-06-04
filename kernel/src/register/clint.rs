@@ -9,7 +9,7 @@ use core::convert::Into;
 use crate::consts::{CLINT_MTIME, CLINT_MTIMECMP};
 
 #[inline]
-unsafe fn read_mtime() -> u64 {
+pub unsafe fn read_mtime() -> u64 {
     ptr::read_volatile(Into::<usize>::into(CLINT_MTIME) as *const u64)
 }
 

@@ -10,6 +10,7 @@ use core::mem;
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
 use crate::process::PROC_MANAGER;
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
+use crate::register::clint;
 use crate::trap;
 
 use super::{Proc, elf};
@@ -38,6 +39,7 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_getmtime(&mut self) -> SysResult;
     fn sys_test(&mut self) -> SysResult;
 }
 
@@ -498,6 +500,9 @@ impl Syscall for Proc {
 
         drop(file);
         Ok(0)
+    }
+    fn sys_getmtime(&mut self) -> SysResult {
+        Ok(unsafe{clint::read_mtime() as usize})
     }
 }
 
