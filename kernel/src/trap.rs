@@ -45,7 +45,7 @@ pub unsafe extern fn user_trap() {
             } else if irq as usize == VIRTIO0_IRQ {
                 DISK.lock().intr();
             } else {
-                panic!("unexpected interrupt, irq={}", irq);
+                //panic!("unexpected interrupt, irq={}", irq);
             }
             if irq > 0 {
                 plic::complete(irq);
@@ -53,14 +53,9 @@ pub unsafe extern fn user_trap() {
 
             p.check_abondon(-1);
         }
-        Trap::Interrupt(scause::Interrupt::SupervisorTimer) => {
-            //kinfo!("time intr");
-            unimplemented!("time intr");
-        }
         Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
             // forwarded by timervec in kernelvec.S.
-            kinfo!("[kernel] time interrupt\n");
             // only cpu 0 inc ticks
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
@@ -160,6 +155,10 @@ pub unsafe fn kerneltrap() {
 
             // give up the cpu
             CPU_MANAGER.my_cpu_mut().try_yield_proc();
+        }
+        Trap::Exception(Exception::SupervisorEnvCall) => {
+
+            unimplemented!("supervisor call");
         }
         Trap::Exception(Exception::UserEnvCall)=> {
             panic!("ecall from supervisor mode");
