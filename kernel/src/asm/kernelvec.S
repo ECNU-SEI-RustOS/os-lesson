@@ -91,6 +91,7 @@ kernelvec:
 .section .text
 .globl timervec
 .align 4
+# 处理机器模式的定时器中断（MTI），更新下一次中断时间，并转发一个监管模式的软件中断（SSI）。
 timervec:
     # start.rs has set up the memory that mscratch points to:
     # scratch[0,8,16] : register save area.
