@@ -55,7 +55,7 @@ clean:
 	cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
-	mkfs/mkfs .gdbinit \
+	mkfs/mkfs .gdbinit xv6.out \
 	$(USER)/usys.S \
 	$(UPROGS)
 
@@ -113,9 +113,12 @@ UPROGS=\
 	$(USER)/_grind\
 	$(USER)/_wc\
 	$(USER)/_zombie\
+	$(USER)/_trace\
+	$(USER)/_sysinfotest\
 
-fs.img: mkfs/mkfs README.md $(UPROGS)
-	mkfs/mkfs fs.img README.md $(UPROGS)
+
+fs.img: mkfs/mkfs README $(UPROGS)
+	mkfs/mkfs fs.img README $(UPROGS)
 
 -include user/*.d
 
