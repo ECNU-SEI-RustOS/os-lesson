@@ -113,8 +113,6 @@ UPROGS=\
 	$(USER)/_grind\
 	$(USER)/_wc\
 	$(USER)/_zombie\
-	$(USER)/_trace\
-	$(USER)/_sysinfotest\
 
 
 fs.img: mkfs/mkfs README $(UPROGS)
