@@ -102,6 +102,8 @@ pub struct ProcData {
     pub pagetable: Option<Box<PageTable>>,
     /// 进程当前工作目录的 inode。
     pub cwd: Option<Inode>,
+
+    pub tracemask: usize,
 }
 
 
@@ -116,6 +118,7 @@ impl ProcData {
             tf: ptr::null_mut(),
             pagetable: None,
             cwd: None,
+            tracemask: 0,
         }
     }
 
@@ -520,14 +523,24 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+            22 => self.sys_trace(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }
         };
+        
         tf.a0 = match sys_result {
             Ok(ret) => ret,
             Err(()) => -1isize as usize,
         };
+
+        let guard = self.excl.lock();
+        let pid = guard.pid;
+        let tracemask = self.data.get_mut().tracemask;
+        if tracemask & (1 << a7) != 0 {
+            println!("{}: syscall {} -> {}", pid, syscall::SYSCALL_NAME[a7], tf.a0 as isize);
+        }
+        drop(guard);
     }
 
     /// # 功能说明
@@ -687,6 +700,7 @@ impl Proc {
         // clone opened files and cwd
         cdata.open_files.clone_from(&pdata.open_files);
         cdata.cwd.clone_from(&pdata.cwd);
+        cdata.tracemask.clone_from(&pdata.tracemask);
         
         // copy process name
         cdata.name.copy_from_slice(&pdata.name);
