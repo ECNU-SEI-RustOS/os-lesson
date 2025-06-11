@@ -75,9 +75,9 @@ copyout(char *s)
   for(int ai = 0; ai < 2; ai++){
     uint64 addr = addrs[ai];
 
-    int fd = open("README.md", 0);
+    int fd = open("README", 0);
     if(fd < 0){
-      printf("open(README.md) failed\n");
+      printf("open(README) failed\n");
       exit(1);
     }
     int n = read(fd, (void*)addr, 8192);
