@@ -1,6 +1,7 @@
 use array_macro::array;
 
 use alloc::boxed::Box;
+use core::sync::atomic::AtomicBool;
 use core::{cmp::min, convert::TryFrom};
 use core::ptr;
 
@@ -915,7 +916,31 @@ impl PageTable {
             debug_assert_eq!(src, va.as_usize());
         }
     }
+
+    pub fn vm_print(&self, level: usize)
+    {
+        if INIT_VM_PRINT.swap(false, core::sync::atomic::Ordering::Relaxed) {
+            println!("page table {:p}", &(self.data));
+        }
+        for (idx, pte) in self.data.iter().enumerate() {
+            if pte.is_valid() {
+                if level == 0 {
+                    println!("..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                    (unsafe { &*pte.as_page_table() }).vm_print(1);
+                }
+                if level == 1 {
+                    println!(".. ..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                    (unsafe { &*pte.as_page_table() }).vm_print(2);
+                }
+                if level == 1 {
+                    println!(".. .. ..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                }
+            }
+        }
+    }
 }
+
+static INIT_VM_PRINT: AtomicBool = AtomicBool::new(true);
 
 impl Drop for PageTable {
     /// # 功能说明

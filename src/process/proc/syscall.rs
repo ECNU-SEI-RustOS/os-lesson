@@ -165,6 +165,12 @@ impl Syscall for Proc {
                     Ok(ret) => result = Ok(ret),
                     Err(s) => error = s,
                 }
+                let guard = self.excl.lock();
+                if guard.pid == 1 {
+                    let data = self.data.get_mut();
+                    data.pagetable.as_ref().unwrap().vm_print(0);
+                }
+                drop(guard);
                 break       
             }
 
