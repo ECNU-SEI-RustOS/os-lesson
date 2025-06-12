@@ -264,7 +264,7 @@ rwsbrk()
   close(fd);
   unlink("rwsbrk");
 
-  fd = open("README.md", O_RDONLY);
+  fd = open("README", O_RDONLY);
   if(fd < 0){
     printf("open(rwsbrk) failed\n");
     exit(1);
@@ -1981,7 +1981,7 @@ dirfile(char *s)
     printf("%s: unlink dirfile/xx succeeded!\n", s);
     exit(1);
   }
-  if(link("README.md", "dirfile/xx") == 0){
+  if(link("README", "dirfile/xx") == 0){
     printf("%s: link to dirfile/xx succeeded!\n", s);
     exit(1);
   }
@@ -2021,7 +2021,7 @@ iref(char *s)
     }
 
     mkdir("");
-    link("README.md", "");
+    link("README", "");
     fd = open("", O_CREATE);
     if(fd >= 0)
       close(fd);
