@@ -2,7 +2,10 @@
 pub const NCPU: usize = 8;
 
 /// Maximum number of processes
-pub const NPROC: usize = 64;
+pub const NPROC: usize = 512;
+
+/// Maximum number of threads
+pub const NTHREAD: usize = 2048;
 
 /// This is actual number of harts.
 /// Same value is passed to qemu with -smp option
