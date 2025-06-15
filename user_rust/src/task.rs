@@ -1,4 +1,4 @@
-use syscall_riscv::{sys_exec, sys_fork, sys_getpid, sys_kill, sys_wait, sys_sleep};
+use syscall_riscv::{sys_exec, sys_fork, sys_getpid, sys_kill, sys_wait, sys_sleep, sys_chdir};
 
 pub fn fork() -> isize {
     sys_fork()
@@ -21,4 +21,8 @@ pub fn wait(exit_code: &mut i32) -> isize {
 
 pub fn sleep(ticks: usize) {
     sys_sleep(ticks);
+}
+
+pub fn chdir(working_dir:&str) -> isize {
+    sys_chdir(working_dir)
 }

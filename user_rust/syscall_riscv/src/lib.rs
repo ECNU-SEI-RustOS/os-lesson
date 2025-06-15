@@ -39,6 +39,7 @@ const SYSCALL_LINK: usize = 19;
 const SYSCALL_MKDIR: usize = 20;
 const SYSCALL_CLOSE: usize = 21;
 const SYSCALL_GETMTIME: usize = 22;
+const SYSCALL_WAITPID: usize = 23;
 const SYSCALL_TEST: usize = 99;
 
 ///进程 A 调用 fork 系统调用之后，内核会创建一个新进程 B，这个进程 B 和调用 fork 的进程A在它们分别返回用户态那一瞬间几乎处于相同的状态：这意味着它们包含的用户态的代码段、堆栈段及其他数据段的内容完全相同，但是它们是被放在两个独立的地址空间中的。因此新进程的地址空间需要从原有进程的地址空间完整拷贝一份。两个进程通用寄存器也几乎完全相同。
@@ -57,10 +58,10 @@ pub fn sys_wait(addr: *mut usize) -> isize {
 pub fn sys_pipe(addr: *mut u32) -> isize {
     syscall(SYSCALL_PIPE, [addr as usize, 0, 0, 0, 0, 0])
 }
-pub fn sys_read(fd: usize, buffer: &mut [u8]) -> isize {
+pub fn sys_read(fd: isize, buffer: &mut [u8]) -> isize {
     syscall(
         SYSCALL_READ,
-        [fd, buffer.as_ptr() as usize, buffer.len(), 0, 0, 0],
+        [fd as usize, buffer.as_ptr() as usize, buffer.len(), 0, 0, 0],
     )
 }
 
@@ -78,8 +79,20 @@ pub fn sys_exec(path: &str, args: &[*const u8]) -> isize {
         [path.as_ptr() as usize, args.as_ptr() as usize, 0, 0, 0, 0],
     )
 }
-pub fn sys_dup(fd: usize) -> isize {
-    syscall(SYSCALL_DUP, [fd, 0, 0, 0, 0, 0])
+pub fn sys_fstat(fd: isize, fstat: usize) -> isize {
+    syscall(
+        SYSCALL_FSTAT,
+        [fd as usize, fstat, 0, 0, 0, 0],
+    )
+}
+pub fn sys_chdir(working_dir: &str) -> isize {
+    syscall(
+        SYSCALL_CHDIR,
+        [working_dir.as_ptr() as usize, 0 , 0, 0, 0, 0],
+    )
+}
+pub fn sys_dup(fd: isize) -> isize {
+    syscall(SYSCALL_DUP, [fd as usize, 0, 0, 0, 0, 0])
 }
 pub fn sys_getpid() -> isize {
     syscall(SYSCALL_GETPID, [0, 0, 0, 0, 0, 0])
@@ -100,10 +113,10 @@ pub fn sys_open(path: &str, flag: u32) -> isize{
     syscall(SYSCALL_OPEN, [path.as_ptr() as usize, flag as usize, 0, 0, 0, 0])
 }
 
-pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
+pub fn sys_write(fd: isize, buffer: &[u8]) -> isize {
     syscall(
         SYSCALL_WRITE,
-        [fd, buffer.as_ptr() as usize, buffer.len(), 0, 0, 0],
+        [fd as usize, buffer.as_ptr() as usize, buffer.len(), 0, 0, 0],
     )
 }
 
@@ -122,7 +135,7 @@ pub fn sys_mkdir(dir_name: &str) -> isize{
     syscall(SYSCALL_MKDIR, [dir_name.as_ptr() as usize, 0, 0, 0, 0, 0])
 }
 
-pub fn sys_close(fd: usize) -> isize{
+pub fn sys_close(fd: isize) -> isize{
     syscall(SYSCALL_CLOSE, [fd as usize, 0, 0, 0, 0, 0])
 }
 
