@@ -8,13 +8,10 @@ pub enum TaskState {
     Available,
     Ready,
     Running,
-    Blocked,
-    Dead,
 }
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)] // not strictly needed but Rust ABI is not guaranteed to be stable
 pub struct TaskContext {
-    // 15 u64
     pub x1: u64,  //ra: return address
     pub x2: u64,  //sp
     pub x8: u64,  //s0,fp

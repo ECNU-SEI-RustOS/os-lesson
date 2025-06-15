@@ -51,7 +51,7 @@ impl Runtime{
     /// it returns false (which means that there are no tasks scheduled) and we are done.
     pub fn run(&mut self) {
         while self.t_yield() {}
-        println!("All tasks finished!");
+        //println!("All tasks finished!");
     }
     /// This is our return function. The only place we use this is in our `guard` function.
     /// If the current task is not our base task we set its state to Available. It means
@@ -66,7 +66,7 @@ impl Runtime{
     #[inline(never)]
     fn t_yield(&mut self) -> bool {
         let mut pos = self.current;
-        println!("{:x}",pos);
+        //println!("{:x}",pos);
         while self.tasks[pos].state != TaskState::Ready {
             pos += 1;
             if pos == self.tasks.len() {
@@ -120,7 +120,7 @@ impl Runtime{
             .find(|t| t.state == TaskState::Available)
             .expect("no available task.");
 
-        println!("RUNTIME: spawning task {} and r_ptr {:x}", available.id, available.r_ptr);
+        //println!("RUNTIME: spawning task {} and r_ptr {:x}", available.id, available.r_ptr);
         let size = available.stack.len();
         unsafe {
             let s_ptr = available.stack.as_mut_ptr().offset(size as isize);
@@ -145,7 +145,6 @@ use core::arch::asm;
 /// This is our guard function that we place on top of the stack. All this function does is set the
 /// state of our current task and then `yield` which will then schedule a new task to be run.
 fn guard() {
-
     let value: u64;
     unsafe {
         asm!(
@@ -163,12 +162,6 @@ fn guard() {
 /// Runtime and then calling `t_yield`
 pub fn yield_task(r_ptr: u64) {
     unsafe {
-        let value:u64;
-        asm!(
-            "mv {}, t1", // 将 x27 的值移动到输出寄存器
-            out(reg) value, // 绑定到 Rust 变量
-        );
-        println!("assert {:x} {:x}",value,r_ptr);
         let rt_ptr = r_ptr as *mut Runtime;
         (*rt_ptr).t_yield();
     };
