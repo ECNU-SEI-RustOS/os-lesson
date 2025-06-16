@@ -5,7 +5,7 @@ use core::sync::atomic::AtomicBool;
 use core::{cmp::min, convert::TryFrom};
 use core::ptr;
 
-use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME};
+use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, TRAPFRAME, USERTEXT, USYSCALL};
 use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
 
 bitflags! {
@@ -423,7 +423,7 @@ impl PageTable {
     /// - 调用者必须保证 `trapframe` 物理地址有效且正确。  
     /// - 返回的页表应妥善管理，避免内存泄漏或数据竞争。  
     /// - 适合在进程创建时调用，且需保证调用时无并发冲突。
-    pub fn alloc_proc_pagetable(trapframe: usize) -> Option<Box<Self>> {
+    pub fn alloc_proc_pagetable(trapframe: usize, usyspage: usize) -> Option<Box<Self>> {
         extern "C" {
             fn trampoline();
         }
@@ -445,7 +445,14 @@ impl PageTable {
                 PteFlag::R | PteFlag::W,
             )
             .ok()?;
-
+        pagetable
+            .map_pages(
+                VirtAddr::from(USYSCALL),
+                PGSIZE,
+                PhysAddr::try_from(usyspage).unwrap(),
+                PteFlag::R | PteFlag::U,
+            )
+            .ok()?;
         Some(pagetable)
     }
 
@@ -473,6 +480,7 @@ impl PageTable {
     pub fn dealloc_proc_pagetable(&mut self, proc_size: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
         self.uvm_unmap(TRAPFRAME.into(), 1, false);
+        self.uvm_unmap(USYSCALL.into(), 1, false);
         // free physical memory
         if proc_size > 0 {
             self.uvm_unmap(0, pg_round_up(proc_size)/PGSIZE, true);

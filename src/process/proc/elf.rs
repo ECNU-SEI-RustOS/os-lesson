@@ -93,7 +93,7 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
     // allocate new pagetable, not assign to proc yet
     let pdata = p.data.get_mut();
     let mut pgt;
-    match PageTable::alloc_proc_pagetable(pdata.tf as usize) {
+    match PageTable::alloc_proc_pagetable(pdata.tf as usize, pdata.up as usize) {
         Some(p) => pgt = p,
         None => {
             drop(idata); drop(inode); LOG.end_op();

@@ -56,3 +56,5 @@ pub const TRAPFRAME: ConstAddr = TRAMPOLINE.const_sub(PGSIZE);
 
 /// user text/code start address
 pub const USERTEXT: ConstAddr = ConstAddr(0);
+
+pub const USYSCALL: ConstAddr = TRAPFRAME.const_sub(PGSIZE);
