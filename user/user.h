@@ -40,3 +40,6 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+
+int pgaccess(void *base, int len, void *mask);
+int ugetpid(void);

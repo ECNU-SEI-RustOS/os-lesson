@@ -2,6 +2,8 @@
 #include "include/stat.h"
 #include "include/fcntl.h"
 #include "user/user.h"
+#include "include/riscv.h"
+#include "include/memlayout.h"
 
 char*
 strcpy(char *s, const char *t)
@@ -133,4 +135,11 @@ void *
 memcpy(void *dst, const void *src, uint n)
 {
   return memmove(dst, src, n);
+}
+
+int
+ugetpid(void)
+{
+  struct usyscall *u = (struct usyscall *)USYSCALL;
+  return u->pid;
 }
