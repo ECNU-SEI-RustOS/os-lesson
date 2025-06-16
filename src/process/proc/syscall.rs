@@ -7,7 +7,9 @@ use core::convert::TryInto;
 use core::fmt::Display;
 use core::mem;
 
+use crate::consts::PGSIZE;
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
+use crate::mm::VirtAddr;
 use crate::process::PROC_MANAGER;
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::trap;
@@ -38,6 +40,7 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_pgaccess(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -501,6 +504,28 @@ impl Syscall for Proc {
         println!("[{}].close(fd={}), file={:?}", self.excl.lock().pid, fd, file);
 
         drop(file);
+        Ok(0)
+    }
+
+    fn sys_pgaccess(&mut self) -> SysResult {
+        let mut start_va = self.arg_addr(0);
+        let page_num = self.arg_i32(1);
+        let ret_pa = self.arg_addr(2);
+        let mut ret: usize = 0;
+        let pgt = self.data.get_mut().pagetable.as_mut().unwrap();
+        for i in 0..page_num {
+            let pte = pgt.walk_mut(unsafe { VirtAddr::from_raw(start_va) }).unwrap();
+            if pte.is_access() {
+                ret |= 1 << i;
+                //println!("access:{},set", i);
+            }
+            else {
+                //println!("access:{},noset", i);
+            }
+            pte.clear_access();
+            start_va += PGSIZE;
+        }
+        let _ = pgt.copy_out(&ret as *const usize as *const u8, ret_pa, size_of::<usize>());
         Ok(0)
     }
 }

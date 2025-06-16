@@ -74,6 +74,16 @@ impl PageTableEntry {
     }
 
     #[inline]
+    pub fn is_access(&self) -> bool {
+        (self.data & (PteFlag::A.bits())) > 0
+    }
+
+    #[inline]
+    pub fn clear_access(&mut self) {
+        self.data &= !PteFlag::A.bits()
+    }
+
+    #[inline]
     fn is_leaf(&self) -> bool {
         let flag_bits = self.data & (PteFlag::R|PteFlag::W|PteFlag::X).bits();
         !(flag_bits == 0)
@@ -309,7 +319,7 @@ impl PageTable {
 
     /// 与 [walk_alloc] 功能相同，
     /// 但如果页表不存在时不会分配新的页表。
-    fn walk_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
+    pub fn walk_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
         let mut pgt = self as *mut PageTable;
         for level in (1..=2).rev() {
             let pte = unsafe { &mut pgt.as_mut().unwrap().data[va.page_num(level)] };
