@@ -521,6 +521,7 @@ impl Proc {
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
             22 => self.sys_getmtime(),
+            23 => self.sys_waitpid(),
             99 => self.sys_test(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
