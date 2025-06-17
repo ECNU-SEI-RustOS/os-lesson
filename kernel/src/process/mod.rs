@@ -1,23 +1,25 @@
 use array_macro::array;
 
 use core::convert::TryFrom;
-use core::ptr;
 use core::mem;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::consts::{NPROC, PGSIZE, TRAMPOLINE, fs::ROOTDEV};
-use crate::mm::{kvm_map, PhysAddr, PteFlag, VirtAddr, RawPage, RawSinglePage, PageTable, RawQuadPage};
+use crate::consts::{fs::ROOTDEV, NPROC, PGSIZE, TRAMPOLINE};
+use crate::fs;
+use crate::mm::{
+    kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
+};
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
-use crate::fs;
 
-pub use cpu::{CPU_MANAGER, CpuManager};
-pub use cpu::{push_off, pop_off};
+pub use cpu::{pop_off, push_off};
+pub use cpu::{CpuManager, CPU_MANAGER};
 pub use proc::Proc;
 
 mod context;
-mod proc;
 mod cpu;
+mod proc;
 mod trapframe;
 
 use context::Context;
@@ -25,39 +27,38 @@ use proc::ProcState;
 use trapframe::TrapFrame;
 
 /// 全局进程管理器（Process Manager）
-/// 
+///
 /// 这是一个模仿 xv6 操作系统的教学内核中的核心进程管理结构体的唯一实例，
 /// 用于维护和管理系统中所有进程的生命周期、状态和调度相关数据。
-/// 
+///
 /// # 用途
 /// - 持有固定大小的进程表（`table`），包含所有进程的状态和资源信息。
 /// - 分配新的进程标识符（PID）。
 /// - 负责进程的创建、初始化、唤醒、阻塞、退出和等待等管理操作。
 /// - 管理进程间的父子关系。
 /// - 提供进程调度相关的接口，如分配可运行进程等。
-/// 
+///
 /// # 并发安全性
 /// - 该静态变量为可变全局，访问时需要使用 `unsafe`，
 ///   代码中部分操作通过自旋锁保护特定成员，但整体访问仍不完全安全。
 /// - 设计上假定访问该变量的代码必须自行保证同步和互斥。
-/// 
+///
 /// # 使用限制
 /// - 仅初始化一次，由第一个 CPU 核心调用 `proc_init` 和 `user_init` 进行初始化。
 /// - 后续所有对进程管理的操作都通过此结构体进行。
 pub static mut PROC_MANAGER: ProcManager = ProcManager::new();
 
-
 /// 进程管理器（Process Manager）
 ///
 /// 这是一个模仿 xv6 的教学操作系统内核中用于管理所有进程的核心结构体，
 /// 负责维护系统中所有进程的状态、父子关系、PID 分配以及调度相关操作。
-/// 
+///
 /// 主要功能包括：
 /// - 存储固定数量的进程表，每个元素代表一个进程。
 /// - 管理进程的父子关系映射。
 /// - 维护初始进程索引（通常为第一个进程）。
 /// - 分配并维护全局唯一的进程标识符（PID）。
-/// 
+///
 /// 并发控制方面，通过自旋锁保护父进程关系和 PID 计数器，
 /// 但访问整个进程表本身未加锁，使用时需注意并发安全。
 pub struct ProcManager {
@@ -86,30 +87,30 @@ impl ProcManager {
     }
 
     /// # 功能说明
-    /// 
+    ///
     /// 初始化进程管理器中所有进程的内核栈空间。
     /// 具体操作包括为每个进程分配一段连续的物理页（4 页大小），
     /// 并在内核虚拟地址空间中映射这段内存作为内核栈，
     /// 同时在其上方设置一个保护页（无效页）作为栈溢出的保护。
-    /// 
+    ///
     /// 该函数通常由系统启动时第一个 CPU 核心调用一次，完成内核栈的初始化。
-    /// 
+    ///
     /// # 参数
-    /// 
+    ///
     /// - `&mut self`：进程管理器的可变引用，允许修改进程表中进程的内核栈地址。
-    /// 
+    ///
     /// # 返回值
-    /// 
+    ///
     /// - 无返回值。
-    /// 
+    ///
     /// # 可能的错误
-    /// 
+    ///
     /// - 该函数未显式处理分配失败或映射失败的情况，
     ///   假定物理页分配和映射均成功。
     /// - 如果内存分配或映射异常，可能导致未定义行为。
-    /// 
+    ///
     /// # 安全性
-    /// 
+    ///
     /// - 本函数使用了 `unsafe`，调用者必须确保仅由初始硬件线程调用，
     ///   并且在调用时没有并发访问 `ProcManager`，避免数据竞争。
     /// - 内存映射操作涉及底层指针转换和物理地址操作，
@@ -125,7 +126,7 @@ impl ProcManager {
             kvm_map(
                 VirtAddr::try_from(va).unwrap(),
                 PhysAddr::try_from(pa).unwrap(),
-                PGSIZE*4,
+                PGSIZE * 4,
                 PteFlag::R | PteFlag::W,
             );
             p.data.get_mut().set_kstack(va);
@@ -133,27 +134,27 @@ impl ProcManager {
     }
 
     /// # 功能说明
-    /// 
+    ///
     /// 分配一个唯一的进程标识符（PID）。
     /// 该函数通过自旋锁保护，支持多线程并发调用，
     /// 确保每次调用返回的 PID 都是唯一且递增的。
-    /// 
+    ///
     /// # 参数
-    /// 
+    ///
     /// - `&self`：对进程管理器的不可变引用，
     ///   内部通过自旋锁保证对 PID 计数器的互斥访问。
-    /// 
+    ///
     /// # 返回值
-    /// 
+    ///
     /// - 返回分配的唯一 PID，类型为 `usize`。
-    /// 
+    ///
     /// # 可能的错误
-    /// 
+    ///
     /// - 本函数未检测 PID 溢出或重复的异常情况，
     ///   在极端情况下（PID 达到最大值）可能产生错误。
-    /// 
+    ///
     /// # 安全性
-    /// 
+    ///
     /// - 函数内部使用自旋锁保护 PID 计数器，
     ///   保证多线程环境下的安全访问。
     /// - 调用此函数本身是安全的，无需额外 `unsafe` 块。
@@ -167,36 +168,34 @@ impl ProcManager {
     }
 
     /// # 功能说明
-    /// 
+    ///
     /// 在进程表中查找一个状态为 `UNUSED` 的空闲进程条目，
     /// 如果找到则为该进程分配新的 PID，初始化运行内核所需的状态，
     /// 包括分配陷阱帧（trapframe）和页表，
     /// 并将进程状态设置为 `ALLOCATED`。
     /// 返回该已分配但尚未运行的进程的可变引用。
-    /// 
+    ///
     /// # 参数
-    /// 
+    ///
     /// - `&mut self`：对进程管理器的可变引用，允许修改进程表。
-    /// 
+    ///
     /// # 返回值
-    /// 
+    ///
     /// - 返回 `Some(&mut Proc)`，表示成功分配并初始化了一个进程。
     /// - 返回 `None`，表示没有找到可用的空闲进程，或资源分配失败（如内存不足）。
-    /// 
+    ///
     /// # 可能的错误
-    /// 
+    ///
     /// - 分配陷阱帧或页表失败时，会返回 `None`，
     ///   表示无法完成新进程的分配。
     /// - 该函数当前未实现OOM（内存不足）恢复机制，
     ///   资源分配失败直接放弃。
-    /// 
+    ///
     /// # 安全性
-    /// 
+    ///
     /// - 分配陷阱帧时使用了 `unsafe`，调用 `RawSinglePage::try_new_zeroed()`，
     ///   需要保证底层内存分配正确且有效。
-    fn alloc_proc(&mut self) ->
-        Option<&mut Proc>
-    {
+    fn alloc_proc(&mut self) -> Option<&mut Proc> {
         let new_pid = self.alloc_pid();
 
         for p in self.table.iter_mut() {
@@ -214,17 +213,19 @@ impl ProcManager {
                     match PageTable::alloc_proc_pagetable(pd.tf as usize) {
                         Some(pgt) => pd.pagetable = Some(pgt),
                         None => {
-                            unsafe { RawSinglePage::from_raw_and_drop(pd.tf as *mut u8); }
-                            return None
-                        },
+                            unsafe {
+                                RawSinglePage::from_raw_and_drop(pd.tf as *mut u8);
+                            }
+                            return None;
+                        }
                     }
                     pd.init_context();
                     guard.pid = new_pid;
                     guard.state = ProcState::ALLOCATED;
 
                     drop(guard);
-                    return Some(p)
-                },
+                    return Some(p);
+                }
                 _ => drop(guard),
             }
         }
@@ -257,20 +258,18 @@ impl ProcManager {
     ///
     /// - 通过持有进程的 `excl` 自旋锁保证状态修改的原子性，避免竞态条件。
     /// - 返回时释放了锁，调用者需确保使用该进程指针时的并发安全。
-    fn alloc_runnable(&mut self) ->
-        Option<&mut Proc>
-    {
+    fn alloc_runnable(&mut self) -> Option<&mut Proc> {
         for p in self.table.iter_mut() {
             let mut guard = p.excl.lock();
             match guard.state {
                 ProcState::RUNNABLE => {
                     guard.state = ProcState::ALLOCATED;
                     drop(guard);
-                    return Some(p)
-                },
+                    return Some(p);
+                }
                 _ => {
                     drop(guard);
-                },
+                }
             }
         }
 
@@ -306,8 +305,7 @@ impl ProcManager {
     ///     并且该索引对应的进程尚未被占用。
     /// - 在调用期间不允许并发访问 `ProcManager`，避免数据竞争。
     pub unsafe fn user_init(&mut self) {
-        let p = self.alloc_proc()
-            .expect("all process should be unused");
+        let p = self.alloc_proc().expect("all process should be unused");
         p.user_init();
         let mut guard = p.excl.lock();
         guard.state = ProcState::RUNNABLE;
@@ -429,7 +427,14 @@ impl ProcManager {
             panic!("init process exiting");
         }
 
-        unsafe { self.table[exit_pi].data.get().as_mut().unwrap().close_files(); }
+        unsafe {
+            self.table[exit_pi]
+                .data
+                .get()
+                .as_mut()
+                .unwrap()
+                .close_files();
+        }
 
         let mut parent_map = self.parents.lock();
 
@@ -440,8 +445,8 @@ impl ProcManager {
                 Some(parent) if *parent == exit_pi => {
                     *parent = self.init_proc;
                     have_child = true;
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         if have_child {
@@ -456,7 +461,12 @@ impl ProcManager {
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
         unsafe {
-            let exit_ctx = self.table[exit_pi].data.get().as_mut().unwrap().get_context();
+            let exit_ctx = self.table[exit_pi]
+                .data
+                .get()
+                .as_mut()
+                .unwrap()
+                .get_context();
             CPU_MANAGER.my_cpu_mut().sched(exit_pexcl, exit_ctx);
         }
 
@@ -515,21 +525,27 @@ impl ProcManager {
                     continue;
                 }
                 let child_pid = child_excl.pid;
-                if addr != 0 && pdata.copy_out(&child_excl.exit_status as *const _ as *const u8,
-                    addr, mem::size_of_val(&child_excl.exit_status)).is_err()
+                if addr != 0
+                    && pdata
+                        .copy_out(
+                            &child_excl.exit_status as *const _ as *const u8,
+                            addr,
+                            mem::size_of_val(&child_excl.exit_status),
+                        )
+                        .is_err()
                 {
-                    return Err(())
+                    return Err(());
                 }
                 parent_map[i].take();
                 self.table[i].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[i].data.get().as_mut().unwrap() };
                 child_data.cleanup();
-                child_excl.cleanup();           
-                return Ok(child_pid)
+                child_excl.cleanup();
+                return Ok(child_pid);
             }
 
             if !have_child || p.killed.load(Ordering::Relaxed) {
-                return Err(())
+                return Err(());
             }
 
             // have children, but none of them exit
@@ -538,7 +554,64 @@ impl ProcManager {
             parent_map = self.parents.lock();
         }
     }
+    fn waiting_pid(&self, current_pid: usize, child_pid: usize, addr: usize) -> Result<usize, ()> {
+        let mut parent_map = self.parents.lock();
+        let p = unsafe { CPU_MANAGER.my_proc() };
+        let pdata = unsafe { p.data.get().as_mut().unwrap() };
+        let mut child_index = 0usize;
+        for i in 0..NPROC {
+            if self.table[i].excl.lock().pid == child_pid  {
+                child_index = i;
+                break;
+            }
+        }
+        if child_index >= NPROC - 1 {
+            return Err(());
+        }
+        if parent_map[child_index].is_none()
+            || *parent_map[child_index].as_ref().unwrap() != current_pid
+        {
+            kinfo!("none");
+            return Err(());
+        }
 
+        loop {
+            let mut child_excl = self.table[child_index].excl.lock();
+
+            if child_excl.state != ProcState::ZOMBIE {
+                // have children, but none of them exit
+                drop(child_excl);
+                let channel = p as *const Proc as usize;
+                p.sleep(channel, parent_map);
+                parent_map = self.parents.lock();
+            } else {
+                if addr != 0
+                    && pdata
+                        .copy_out(
+                            &child_excl.exit_status as *const _ as *const u8,
+                            addr,
+                            mem::size_of_val(&child_excl.exit_status),
+                        )
+                        .is_err()
+                {
+                    return Err(());
+                }
+
+                if p.killed.load(Ordering::Relaxed) {
+                    return Err(());
+                }
+
+                parent_map[child_index].take();
+                self.table[child_index].killed.store(false, Ordering::Relaxed);
+                let child_data = unsafe { self.table[child_index].data.get().as_mut().unwrap() };
+                child_data.cleanup();
+                child_excl.cleanup();
+                drop(child_excl);
+                return Ok(child_pid);
+            }
+        }
+    }
+    
     /// # 功能说明
     ///
     /// 根据给定的进程标识符（PID）杀死对应的进程。
@@ -573,7 +646,7 @@ impl ProcManager {
                 if guard.state == ProcState::SLEEPING {
                     guard.state = ProcState::RUNNABLE;
                 }
-                return Ok(())
+                return Ok(());
             }
         }
 
@@ -591,10 +664,10 @@ impl ProcManager {
 /// 中断或异常处理程序不得调用此函数。
 unsafe fn fork_ret() -> ! {
     static mut INITIALIZED: bool = false;
-    
+
     // Still holding p->lock from scheduler
     CPU_MANAGER.my_proc().excl.unlock();
-    
+
     if !INITIALIZED {
         INITIALIZED = true;
         // File system initialization
