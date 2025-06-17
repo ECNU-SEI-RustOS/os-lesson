@@ -55,16 +55,17 @@ pub fn sys_exit(no: i32) -> ! {
 pub fn sys_wait(addr: *mut usize) -> isize {
     syscall(SYSCALL_WAIT, [addr as usize, 0, 0, 0, 0, 0])
 }
+
 pub fn sys_pipe(addr: *mut u32) -> isize {
     syscall(SYSCALL_PIPE, [addr as usize, 0, 0, 0, 0, 0])
 }
+
 pub fn sys_read(fd: isize, buffer: &mut [u8]) -> isize {
     syscall(
         SYSCALL_READ,
         [fd as usize, buffer.as_ptr() as usize, buffer.len(), 0, 0, 0],
     )
 }
-
 
 pub fn sys_kill(pid: isize) -> isize {
     syscall(SYSCALL_KILL, [pid as usize, 0, 0, 0, 0, 0])
@@ -141,4 +142,8 @@ pub fn sys_close(fd: isize) -> isize{
 
 pub fn sys_getmtime() -> isize {
     syscall(SYSCALL_GETMTIME, [0, 0, 0, 0, 0, 0])
+}
+
+pub fn sys_waitpid(pid: isize, exit_code: *mut i32) -> isize {
+    syscall(SYSCALL_WAITPID, [pid as usize, exit_code as usize, 0, 0, 0, 0])
 }

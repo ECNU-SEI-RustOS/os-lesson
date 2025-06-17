@@ -40,6 +40,7 @@ pub trait Syscall {
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
     fn sys_getmtime(&mut self) -> SysResult;
+    fn sys_waitpid(&mut self) -> SysResult;
     fn sys_test(&mut self) -> SysResult;
 }
 
@@ -77,6 +78,18 @@ impl Syscall for Proc {
     fn sys_wait(&mut self) -> SysResult {
         let addr = self.arg_addr(0);
         let ret =  unsafe { PROC_MANAGER.waiting(self.index, addr) };
+
+        #[cfg(feature = "trace_syscall")]
+        println!("[{}].wait(addr={:#x}) = {:?}(pid)", self.excl.lock().pid, addr, ret);
+
+        ret
+    }
+    /// Wait for the special pid process to exit.
+    /// Recycle the chile process and return its pid.
+    fn sys_waitpid(&mut self) -> SysResult {
+        let pid = self.arg_raw(0);
+        let exitcode_addr =  self.arg_addr(1);
+        let ret =  unsafe { PROC_MANAGER.waiting_pid(self.index, pid ,exitcode_addr) };
 
         #[cfg(feature = "trace_syscall")]
         println!("[{}].wait(addr={:#x}) = {:?}(pid)", self.excl.lock().pid, addr, ret);
