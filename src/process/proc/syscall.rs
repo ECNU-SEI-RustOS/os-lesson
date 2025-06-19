@@ -284,6 +284,7 @@ impl Syscall for Proc {
 
     /// Put the current process into sleep.
     fn sys_sleep(&mut self) -> SysResult {
+        self.data.get_mut().pagetable.as_ref().unwrap().backtrace();
         let count = self.arg_i32(0);
         if count < 0 {
             return Err(())

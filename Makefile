@@ -34,7 +34,9 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
-$(KERNEL):
+RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
+
+$(KERNEL): $(RUST_SRCS)
 	cargo build
 
 qemu: $(KERNEL) fs.img
@@ -113,7 +115,7 @@ UPROGS=\
 	$(USER)/_grind\
 	$(USER)/_wc\
 	$(USER)/_zombie\
-
+	$(USER)/_bttest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
@@ -124,4 +126,4 @@ grade:
 	@echo $(MAKE) clean
 	@$(MAKE) clean || \
           (echo "'make clean' failed.  HINT: Do you have another running instance of xv6?" && exit 1)
-	./grade-lab-syscall
+	./grade-lab-trap
