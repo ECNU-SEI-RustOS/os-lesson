@@ -400,22 +400,6 @@ impl PageTable {
         }
     }
 
-    pub fn backtrace(&self) {
-        let mut fp: usize;
-        unsafe{
-            core::arch::asm!("mv {}, fp", out(reg) fp);
-        }
-        let mut ra: usize;
-        let barrier: usize = (fp + PGSIZE - 1) & !(PGSIZE - 1);
-        println!("backtrace:");
-        while fp < barrier {
-            ra = self.walk_addr(unsafe { VirtAddr::from_raw(fp - 8) }).ok().unwrap().into_raw() + ((fp - 8) % PGSIZE);
-            println!("0x{:x}", ra);
-            fp = unsafe { *((fp - 16) as *const usize) };
-            println!("0x{:x}", fp);
-        }
-    }
-
     /// # 功能说明
     /// 分配并初始化一个新的进程页表，
     /// 包含对陷阱处理跳板（trampoline）和进程陷阱帧（trapframe）内存区域的映射。  
