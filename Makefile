@@ -116,6 +116,7 @@ UPROGS=\
 	$(USER)/_wc\
 	$(USER)/_zombie\
 	$(USER)/_bttest\
+	$(USER)/_alarmtest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
