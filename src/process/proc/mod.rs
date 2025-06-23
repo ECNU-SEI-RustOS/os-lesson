@@ -81,6 +81,38 @@ impl ProcExcl {
     }
 }
 
+pub struct ProcAlarm {
+    pub interval: usize,
+    pub past_tick: usize,
+    pub handler_addr: isize,
+    pub alarm_frame: *mut TrapFrame,
+    pub handler_called: bool,
+}
+
+impl ProcAlarm {
+    const fn new() -> Self {
+        Self {
+            interval: 0,
+            past_tick: 0,
+            handler_addr: -1,
+            alarm_frame: ptr::null_mut(),
+            handler_called: false,
+        }
+    }
+
+    pub fn cleanup(&mut self) {
+        self.interval = 0;
+        self.past_tick = 0;
+        self.handler_addr = -1;
+        self.handler_called = false;
+        let af = self.alarm_frame;
+        self.alarm_frame = ptr::null_mut();
+        if !af.is_null() {
+            unsafe { RawSinglePage::from_raw_and_drop(af as *mut u8); }
+        }
+    }
+}
+
 /// 进程私有数据结构，保存进程运行时的核心信息。
 ///
 /// 该结构体仅在当前进程运行时访问，或在持有 [`ProcExcl`] 锁的其他进程（例如 fork）
@@ -381,6 +413,7 @@ pub struct Proc {
     pub data: UnsafeCell<ProcData>,
     /// 标识进程是否被杀死的原子布尔变量，用于调度和信号处理。
     pub killed: AtomicBool,
+    pub alarm: UnsafeCell<ProcAlarm>,
 }
 
 impl Proc {
@@ -390,6 +423,7 @@ impl Proc {
             excl: SpinLock::new(ProcExcl::new(), "ProcExcl"),
             data: UnsafeCell::new(ProcData::new()),
             killed: AtomicBool::new(false),
+            alarm: UnsafeCell::new(ProcAlarm::new()),
         }
     }
 
@@ -520,6 +554,8 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+            22 => self.sys_sigalarm(),
+            23 => self.sys_sigreturn(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }
@@ -662,9 +698,11 @@ impl Proc {
     /// - 子进程资源清理确保不产生内存泄漏和悬挂指针。
     fn fork(&mut self) -> Result<usize, ()> {
         let pdata = self.data.get_mut();
+        let palarm = self.alarm.get_mut();
         let child = unsafe { PROC_MANAGER.alloc_proc().ok_or(())? };
         let mut cexcl = child.excl.lock();
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
+        let calarm = unsafe { child.alarm.get().as_mut().unwrap() };
 
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
@@ -673,6 +711,7 @@ impl Proc {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
             cdata.cleanup();
+            calarm.cleanup();
             cexcl.cleanup();
             return Err(())
         }
@@ -681,6 +720,7 @@ impl Proc {
         // clone trapframe and return 0 on a0
         unsafe {
             ptr::copy_nonoverlapping(pdata.tf, cdata.tf, 1);
+            ptr::copy_nonoverlapping(palarm.alarm_frame, calarm.alarm_frame, 1);
             cdata.tf.as_mut().unwrap().a0 = 0;
         }
 

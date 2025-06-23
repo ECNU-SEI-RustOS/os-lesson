@@ -96,7 +96,7 @@ pub mod tests {
 }
 
 pub fn backtrace() {
-    let pgt = unsafe { CPU_MANAGER.my_proc().data.get_mut().pagetable.as_mut().unwrap() };
+    //let pgt = unsafe { CPU_MANAGER.my_proc().data.get_mut().pagetable.as_mut().unwrap() };
     let mut fp: usize;
     unsafe{
         core::arch::asm!("mv {}, fp", out(reg) fp);

@@ -38,6 +38,8 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_sigalarm(&mut self) -> SysResult;
+    fn sys_sigreturn(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -496,6 +498,23 @@ impl Syscall for Proc {
         println!("[{}].close(fd={}), file={:?}", self.excl.lock().pid, fd, file);
 
         drop(file);
+        Ok(0)
+    }
+
+    fn sys_sigalarm(&mut self) -> SysResult {
+        let interval = self.arg_i32(0) as usize;
+        let handler = self.arg_addr(1) as isize;
+        let p = self.alarm.get_mut();
+        p.interval = interval;
+        p.handler_addr = handler;
+        Ok(0)
+    }
+
+    fn sys_sigreturn(&mut self) -> SysResult {
+        let pa = self.alarm.get_mut();
+        let pd = self.data.get_mut();
+        unsafe { core::ptr::copy_nonoverlapping(pa.alarm_frame, pd.tf, 1) };
+        pa.handler_called = false;
         Ok(0)
     }
 }

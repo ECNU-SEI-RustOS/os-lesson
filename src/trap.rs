@@ -3,7 +3,7 @@
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{PROC_MANAGER, Proc}};
+use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{Proc, PROC_MANAGER}, rmain::STARTED};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self, ScauseType}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -58,6 +58,20 @@ pub unsafe extern fn user_trap() {
             // only cpu 0 inc ticks
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
+            }
+
+            if STARTED.load(Ordering::SeqCst) {
+                let pa = unsafe { CPU_MANAGER.my_proc().alarm.get_mut() };
+                let pd = unsafe { CPU_MANAGER.my_proc().data.get_mut() };
+                if pa.interval > 0 {
+                    pa.past_tick += 1;
+                }
+                if (pa.past_tick == pa.interval) && (!pa.handler_called) && (pa.interval > 0) {
+                    pa.past_tick = 0;
+                    unsafe { core::ptr::copy_nonoverlapping(pd.tf, pa.alarm_frame, 1) };
+                    (unsafe {&mut *pd.tf }).epc = pa.handler_addr as usize;
+                    pa.handler_called = true;
+                }
             }
 
             // acknowledge the software interrupt
