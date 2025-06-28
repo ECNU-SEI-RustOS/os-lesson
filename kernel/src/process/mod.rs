@@ -21,6 +21,7 @@ mod context;
 mod cpu;
 mod proc;
 mod trapframe;
+mod task;
 
 use context::Context;
 use proc::ProcState;
