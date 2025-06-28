@@ -1,0 +1,12 @@
+/target
+/.idea
+fs.img
+/.vscode
+*.o
+*.d
+*.asm
+*.sym
+_*
+user/usys.S
+/mkfs/mkfs
+doc.txt
