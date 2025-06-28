@@ -27,7 +27,8 @@ pub struct TaskContext {
     pub x26: u64,
     pub x27: u64,
     pub nx1: u64, //new return address
-    pub r_ptr: u64 // self ptr
+    pub r_ptr: u64,// self ptr
+    pub params: u64
 }
 
 pub struct Task {
