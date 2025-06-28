@@ -69,6 +69,7 @@ fn main() -> i32 {
             yield_task(r_ptr);
         }
         println!("TASK 1 FINISHED");
+        guard(r_ptr);
     },&args1 as *const MyType as u64);
     runtime.spawn(|r_ptr, args| {
         println!("TASK 2 STARTING");
@@ -80,26 +81,28 @@ fn main() -> i32 {
             println!("task: {} counter: {} arg:{}", id, i, para.str);
             yield_task(r_ptr);
         }
+        for i in 0..8 {
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
+        }
         println!("TASK 2 FINISHED");
+        guard(r_ptr);
     },&args2 as *const MyType as u64);
-    // runtime.spawn(|r_ptr| {
-    //     println!("TASK 3 STARTING");
-    //     let id = 3;
-    //     for i in 0..12 {
-    //         println!("task: {} counter: {}", id, i);
-    //         yield_task(r_ptr);
-    //     }
-    //     println!("TASK 3 FINISHED");
-    // });
-    // runtime.spawn(|r_ptr| {
-    //     println!("TASK 4 STARTING");
-    //     let id = 4;
-    //     for i in 0..16 {
-    //         println!("task: {} counter: {}", id, i);
-    //         yield_task(r_ptr);
-    //     }
-    //     println!("TASK 4 FINISHED");
-    // });`
+    runtime.spawn(|r_ptr, args| {
+        println!("TASK 2 STARTING");
+        let id = 3;
+        let arg =  args as *const MyType;
+        
+        let para = unsafe {*arg};
+        for i in 0..8 {
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
+            yield_task(r_ptr);
+        }
+        for i in 0..8 {
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
+        }
+        println!("TASK 3 FINISHED");
+        guard(r_ptr);
+    },&args2 as *const MyType as u64);
     runtime.run();
     println!("stackful_coroutine PASSED");
 
