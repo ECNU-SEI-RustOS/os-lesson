@@ -15,6 +15,7 @@ switch:
         sd x26, 0x60(a0)
         sd x27, 0x68(a0)
         sd x1, 0x70(a0)
+        sd x11, 0x80(a0)
 
         ld x1, 0x00(a1)
         ld x2, 0x08(a1)
@@ -32,5 +33,6 @@ switch:
         ld x27, 0x68(a1)
         ld t0, 0x70(a1)
         ld t1, 0x78(a1)
-        mv x10, t1  #set param
+        ld x11, 0x80(a1) #set param
+        mv x10, t1 
         jr t0
