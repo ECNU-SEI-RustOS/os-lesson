@@ -145,18 +145,11 @@ impl Runtime{
     }
 }
 
-use core::arch::asm;
 /// This is our guard function that we place on top of the stack. All this function does is set the
 /// state of our current task and then `yield` which will then schedule a new task to be run.
-fn guard() {
-    let value: u64;
+pub fn guard(r_ptr: *const Runtime) {
     unsafe {
-        asm!(
-            "mv {}, t1",
-            out(reg) value, // 绑定到 Rust 变量
-        );
-
-        let rt_ptr = value as *mut Runtime;
+        let rt_ptr = r_ptr as *mut Runtime;
         (*rt_ptr).t_return();
     };
 }
