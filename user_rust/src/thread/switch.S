@@ -32,7 +32,6 @@ switch:
         ld x26, 0x60(a1)
         ld x27, 0x68(a1)
         ld t0, 0x70(a1)
-        ld t1, 0x78(a1)
+        ld x10, 0x78(a1) #set r_ptr
         ld x11, 0x80(a1) #set param
-        mv x10, t1 
         jr t0
