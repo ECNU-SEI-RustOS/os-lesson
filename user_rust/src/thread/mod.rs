@@ -78,6 +78,7 @@ impl Runtime{
             if pos == 0 && pos == self.current {
                 return false;
             }
+
         }
 
         if self.tasks[self.current].state != TaskState::Available {
@@ -87,7 +88,9 @@ impl Runtime{
         self.tasks[pos].state = TaskState::Running;
         let old_pos = self.current;
         self.current = pos;
-
+        if old_pos == pos {
+            return  self.tasks.len() > 0
+        }
         unsafe {
             switch(&mut self.tasks[old_pos].ctx, &self.tasks[pos].ctx);
         }

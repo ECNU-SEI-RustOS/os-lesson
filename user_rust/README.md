@@ -473,6 +473,69 @@ make build
     ```
     以上是为了加载任务的参数给自定义函数使用。
 
+    ```
+    #[inline(never)]
+    fn t_yield(&mut self) -> bool {
+        let mut pos = self.current;
+        let mut temp = 0usize;
+        while self.tasks[pos].state != TaskState::Ready {
+            pos += 1;
+            if pos == self.tasks.len() {
+                pos = 1;
+                if temp == 1 {
+                    pos = 0;
+                }
+                temp = 1;
+            }
+            if pos == 0 && pos == self.current {
+                return false;
+            }
+
+        }
+
+        if self.tasks[self.current].state != TaskState::Available {
+            self.tasks[self.current].state = TaskState::Ready;
+        }
+
+        self.tasks[pos].state = TaskState::Running;
+        let old_pos = self.current;
+        self.current = pos;
+        if old_pos == pos {
+            return  self.tasks.len() > 0
+        }
+
+        unsafe {
+            switch(&mut self.tasks[old_pos].ctx, &self.tasks[pos].ctx);
+        }
+
+        self.tasks.len() > 0
+    }
+    ```
+    以上是任务切换过程
+    ```
+        let mut pos = self.current;
+        let mut temp = 0usize;
+        while self.tasks[pos].state != TaskState::Ready {
+            pos += 1;
+            if pos == self.tasks.len() {
+                pos = 1;
+                if temp == 1 {
+                    pos = 0;
+                }
+                temp = 1;
+            }
+            if pos == 0 && pos == self.current {
+                return false;
+            }
+        }
+    ```
+    依次在任务列表中寻找状态为`Ready`的任务。在对于Runtime的初始任务(id=0)的IDLE任务，切换时跳过，避免不必要的上下文切换开销。
+    ```
+        if old_pos == pos {
+            return  self.tasks.len() > 0
+        }
+    ```
+    在发现新任务和旧任务的相同时，不切换，避免不必要的上下文切换开销。
 6. 用户线程主动yield切换  
     用于​​主动让出当前任务的执行权​​，切换到其他就绪任务。
     ```
@@ -505,18 +568,12 @@ make build
     },&args2 as *const MyType as u64);
     ```
 7. 线程结束
-    用于线程退出处理​，用户自定义函数运行完毕后，返回线程管理器
+    用于线程退出处理​，用户自定义函数运行完毕后，返回任务管理器
     ```
     // src/thread/mod.rs
-    fn guard() {
-        let value: u64;
+    pub fn guard(r_ptr: *const Runtime) {
         unsafe {
-            asm!(
-                "mv {}, t1",
-                out(reg) value, 
-            );                  //获取t1寄存器的RunTime地址
-            
-            let rt_ptr = value as *mut Runtime;
+            let rt_ptr = r_ptr as *mut Runtime;
             (*rt_ptr).t_return();
         };
     }
