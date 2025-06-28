@@ -386,8 +386,9 @@ make build
         pub x25: u64,
         pub x26: u64,
         pub x27: u64,
-        pub nx1: u64, //new return address
-        pub r_ptr: u64 // self ptr 指向RUNTIME的指针
+        pub nx1: u64,   // new return address
+        pub r_ptr: u64  // self ptr 指向RUNTIME的指针
+        pub params: u64 // 传入参数的 args 的地址
     }
     ```
 2. 用户空间线程状态
@@ -409,8 +410,19 @@ make build
         pub r_ptr: u64          // 线程管理器指针
     }
     ```
-4. 用户空间线程切换核心
-    用户态线程切换汇编  
+4. 用户空间线程管理者
+    用于用户线程的管理，切换线程
+    ```
+    pub struct Runtime {
+        tasks: Vec<Task>,
+        current: usize,
+    }
+    ```
+    `​​tasks​`​：管理所有任务，Task 包含栈、上下文和状态。  
+​    `​current`​​：标记当前运行的任务（索引）。  
+5. 用户空间线程切换核心
+    用户态线程切换汇编，符合riscv架构指令二进制代码遵循严格的函数调用规范（Application Binary Interface, ABI），核心包括​​寄存器使用约定、参数传递规则、栈帧管理​​三部分。  
+    通过switch的汇编保存需要被调用者保存(x8-x9, x18-x27)，x1(ra)存储​​返回地址​寄存器和x2(sp)​栈指针寄存器。
     ```
     // src/thread/switch.S
     .global switch
@@ -430,6 +442,7 @@ make build
         sd x26, 0x60(a0)
         sd x27, 0x68(a0)
         sd x1, 0x70(a0)
+        sd x11, 0x80(a0)
 
         ld x1, 0x00(a1)
         ld x2, 0x08(a1)
@@ -445,26 +458,25 @@ make build
         ld x25, 0x58(a1)
         ld x26, 0x60(a1)
         ld x27, 0x68(a1)
-        ld t0, 0x70(a1)  #用户自定义函数
-        ld t1, 0x78(a1)
-        mv x10, t1  #set param (用于yield_task)
+        ld t0, 0x70(a1)
+        ld x10, 0x78(a1) #set r_ptr
+        ld x11, 0x80(a1) #set param
         jr t0
     ```
-5. 用户空间线程管理者
-    用于用户线程的管理，切换线程
+    
     ```
-    pub struct Runtime {
-        tasks: Vec<Task>,
-        current: usize,
-    }
+        ld x10, 0x78(a1) #set r_ptr for the `guard` and the `yield_task`
     ```
-    `​​tasks​`​：管理所有任务，Task 包含栈、上下文和状态。  
-​    `​current`​​：标记当前运行的任务（索引）。  
+    以上是为了加载Runtime的地址，确保后续`guard`和`yield_task`进行任务管理。
+    ```
+        ld x11, 0x80(a1)  #set args parameter
+    ```
+    以上是为了加载任务的参数给自定义函数使用。
 
-
-6. 线程切换
+6. 用户线程主动yield切换  
     用于​​主动让出当前任务的执行权​​，切换到其他就绪任务。
     ```
+    // src/thread/mod.rs
     pub fn yield_task(r_ptr: u64) {
         unsafe {
             let rt_ptr = r_ptr as *mut Runtime;
@@ -472,16 +484,37 @@ make build
         };
     }
     ```
+    这里在用户创建的线程中的使用`yield_task`主动让出处理器资源和使用`guard`退出任务。
+    例如以下创建的用户线程
+    ```
+    runtime.spawn(|r_ptr, args| {
+        println!("TASK 2 STARTING");
+        let id = 2;
+        let arg =  args as *const MyType;
+        
+        let para = unsafe {*arg};
+        for i in 0..8 {
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
+            yield_task(r_ptr);
+        }
+        for i in 0..8 {
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
+        }
+        println!("TASK 2 FINISHED");
+        guard(r_ptr);
+    },&args2 as *const MyType as u64);
+    ```
 7. 线程结束
     用于线程退出处理​，用户自定义函数运行完毕后，返回线程管理器
     ```
+    // src/thread/mod.rs
     fn guard() {
         let value: u64;
         unsafe {
             asm!(
                 "mv {}, t1",
-                out(reg) value, // 绑定到 Rust 变量
-            );
+                out(reg) value, 
+            );                  //获取t1寄存器的RunTime地址
             
             let rt_ptr = value as *mut Runtime;
             (*rt_ptr).t_return();
@@ -491,10 +524,11 @@ make build
 
 8. 线程创建
     找到空闲任务，设置其栈和上下文。  
-    将guard函数地址压栈，确保任务结束时调用t_return清理资源。  
-    设置任务入口函数f和栈指针（需对齐）。  
+    设置任务入口函数f和栈指针（需对齐）和任务参数。  
+    `fn spawn(&mut self, f: fn(*const Runtime, u64), params: u64) `需要传入一个自定义的`fn(*const Runtime, u64)`的函数指针和一个自定义参数的地址`u64`。
     ```
-    pub fn spawn(&mut self, f: fn(u64)) {
+    // src/thread/mod.rs
+    pub fn spawn(&mut self, f: fn(*const Runtime, u64), params: u64) {
         let available = self
             .tasks
             .iter_mut()
@@ -505,12 +539,14 @@ make build
         let size = available.stack.len();
         unsafe {
             let s_ptr = available.stack.as_mut_ptr().offset(size as isize);
+
             let s_ptr = (s_ptr as usize & !7) as *mut u8;
 
             available.ctx.x1 = guard as u64; //ctx.x1  is old return address
             available.ctx.nx1 = f as u64; //ctx.nx1 is new return address
             available.ctx.x2 = s_ptr.offset(-32) as u64; //cxt.x2 is sp
             available.ctx.r_ptr = available.r_ptr;
+            available.ctx.params = params;        // pointer to user's custom parameter
         }
         available.state = TaskState::Ready;
     }
