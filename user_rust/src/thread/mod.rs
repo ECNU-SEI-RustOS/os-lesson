@@ -51,7 +51,6 @@ impl Runtime{
     /// it returns false (which means that there are no tasks scheduled) and we are done.
     pub fn run(&mut self) {
         while self.t_yield() {}
-        //println!("All tasks finished!");
     }
     /// This is our return function. The only place we use this is in our `guard` function.
     /// If the current task is not our base task we set its state to Available. It means
@@ -66,13 +65,17 @@ impl Runtime{
     #[inline(never)]
     fn t_yield(&mut self) -> bool {
         let mut pos = self.current;
-        //println!("{:x}",pos);
+        let mut temp = 0usize;
         while self.tasks[pos].state != TaskState::Ready {
             pos += 1;
             if pos == self.tasks.len() {
-                pos = 0;
+                pos = 1;
+                if temp == 1 {
+                    pos = 0;
+                }
+                temp = 1;
             }
-            if pos == self.current {
+            if pos == 0 && pos == self.current {
                 return false;
             }
         }
@@ -113,7 +116,7 @@ impl Runtime{
     /// executing that first when we are scheuled to run.
     ///
     /// Lastly we set the state as `Ready` which means we have work to do and is ready to do it.
-    pub fn spawn(&mut self, f: fn(u64)) {
+    pub fn spawn(&mut self, f: fn(*const Runtime, u64), params: u64) {
         let available = self
             .tasks
             .iter_mut()
@@ -136,6 +139,7 @@ impl Runtime{
             available.ctx.nx1 = f as u64; //ctx.nx2 is new return address
             available.ctx.x2 = s_ptr.offset(-32) as u64; //cxt.x2 is sp
             available.ctx.r_ptr = available.r_ptr;
+            available.ctx.params = params;
         }
         available.state = TaskState::Ready;
     }
@@ -151,7 +155,7 @@ fn guard() {
             "mv {}, t1",
             out(reg) value, // 绑定到 Rust 变量
         );
-        
+
         let rt_ptr = value as *mut Runtime;
         (*rt_ptr).t_return();
     };
@@ -160,7 +164,7 @@ fn guard() {
 /// We know that Runtime is alive the length of the program and that we only access from one core
 /// (so no datarace). We yield execution of the current task  by dereferencing a pointer to our
 /// Runtime and then calling `t_yield`
-pub fn yield_task(r_ptr: u64) {
+pub fn yield_task(r_ptr: *const Runtime) {
     unsafe {
         let rt_ptr = r_ptr as *mut Runtime;
         (*rt_ptr).t_yield();
