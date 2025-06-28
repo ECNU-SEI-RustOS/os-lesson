@@ -6,7 +6,19 @@ use user_rust_lib::file::{fstat};
 use user_rust_lib::thread::*;
 #[macro_use]
 extern crate user_rust_lib;
-
+#[derive(Clone, Copy)]
+pub struct MyType{
+    id: u32,
+    str: &'static str
+}
+impl MyType {
+    fn new(id:u32,str:&'static str)->Self{
+        Self { 
+            id:id,
+            str:str
+        }
+    }
+}
 #[no_mangle]
 fn main() -> i32 {
     println!("hello world by rust{}",1);
@@ -44,42 +56,50 @@ fn main() -> i32 {
 
     let r_ptr = runtime.init();
     println!("r_ptr:{:x}",r_ptr);
-    runtime.spawn(|r_ptr| {
+    let args1 = MyType::new(12, "ych");
+    let args2 = MyType::new(17, "kss");
+    runtime.spawn(|r_ptr, args | {
         println!("TASK  1 STARTING");
         let id = 1;
+        let arg =  args as *const MyType;
+        
+        let para = unsafe {*arg};
         for i in 0..4 {
-            println!("task: {} counter: {}", id, i);
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
             yield_task(r_ptr);
         }
         println!("TASK 1 FINISHED");
-    });
-    runtime.spawn(|r_ptr| {
+    },&args1 as *const MyType as u64);
+    runtime.spawn(|r_ptr, args| {
         println!("TASK 2 STARTING");
         let id = 2;
+        let arg =  args as *const MyType;
+        
+        let para = unsafe {*arg};
         for i in 0..8 {
-            println!("task: {} counter: {}", id, i);
+            println!("task: {} counter: {} arg:{}", id, i, para.str);
             yield_task(r_ptr);
         }
         println!("TASK 2 FINISHED");
-    });
-    runtime.spawn(|r_ptr| {
-        println!("TASK 3 STARTING");
-        let id = 3;
-        for i in 0..12 {
-            println!("task: {} counter: {}", id, i);
-            yield_task(r_ptr);
-        }
-        println!("TASK 3 FINISHED");
-    });
-    runtime.spawn(|r_ptr| {
-        println!("TASK 4 STARTING");
-        let id = 4;
-        for i in 0..16 {
-            println!("task: {} counter: {}", id, i);
-            yield_task(r_ptr);
-        }
-        println!("TASK 4 FINISHED");
-    });
+    },&args2 as *const MyType as u64);
+    // runtime.spawn(|r_ptr| {
+    //     println!("TASK 3 STARTING");
+    //     let id = 3;
+    //     for i in 0..12 {
+    //         println!("task: {} counter: {}", id, i);
+    //         yield_task(r_ptr);
+    //     }
+    //     println!("TASK 3 FINISHED");
+    // });
+    // runtime.spawn(|r_ptr| {
+    //     println!("TASK 4 STARTING");
+    //     let id = 4;
+    //     for i in 0..16 {
+    //         println!("task: {} counter: {}", id, i);
+    //         yield_task(r_ptr);
+    //     }
+    //     println!("TASK 4 FINISHED");
+    // });`
     runtime.run();
     println!("stackful_coroutine PASSED");
 
