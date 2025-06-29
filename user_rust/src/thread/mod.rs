@@ -68,12 +68,19 @@ impl Runtime{
     fn t_wait(&mut self, id: usize) {
         if self.current != 0 {
             self.tasks[self.current].state = TaskState::Sleep;
-            self.waits[self.current] = id;
+            if id == 0 {
+                self.waits[self.current] = usize::MAX;
+            } else {
+                self.waits[self.current] = id;
+            }
             self.t_yield();
         }
     }
     fn t_signal(&mut self, id: usize){
-        if self.waits[id] == self.current {
+        if self.waits[id] == usize::MAX {
+            self.tasks[id].state = TaskState::Ready;
+            self.waits[id] = 0;
+        }else if self.waits[id] == self.current {
             self.tasks[id].state = TaskState::Ready;
             self.waits[id] = 0;
         }
@@ -192,11 +199,17 @@ pub fn yield_task(r_ptr: *const Runtime) {
         (*rt_ptr).t_yield();
     };
 }
-
-pub fn wait_task(r_ptr: *const Runtime, id: usize) {
+/// wait for other tasks signaling. If id is 0, wait for any of tasks signaling
+pub fn waittid_task(r_ptr: *const Runtime, id: usize) {
     unsafe {
         let rt_ptr = r_ptr as *mut Runtime;
         (*rt_ptr).t_wait(id);
+    };
+}
+pub fn wait_task(r_ptr: *const Runtime){
+    unsafe {
+        let rt_ptr = r_ptr as *mut Runtime;
+        (*rt_ptr).t_wait(0);
     };
 }
 
