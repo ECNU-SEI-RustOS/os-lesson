@@ -53,9 +53,9 @@ fn main() -> i32 {
     println!("stackful_coroutine begin...");
     println!("TASK 0 (Runtime) STARTING");
     let mut runtime = Runtime::new();
-
+    
     let r_ptr = runtime.init();
-    println!("r_ptr:{:x}",r_ptr);
+
     let args1 = MyType::new(12, "ych");
     let args2 = MyType::new(17, "kss");
     runtime.spawn(|r_ptr, args | {
@@ -90,24 +90,7 @@ fn main() -> i32 {
         signal_task(r_ptr, 1);
         guard(r_ptr);
     },&args2 as *const MyType as u64);
-    // runtime.spawn(|r_ptr, args| {
-    //     println!("TASK 2 STARTING");
-    //     let id = 3;
-    //     let arg =  args as *const MyType;
-        
-    //     let para = unsafe {*arg};
-    //     for i in 0..8 {
-    //         println!("task: {} counter: {} arg:{}", id, i, para.str);
-    //         yield_task(r_ptr);
-    //     }
-    //     for i in 0..8 {
-    //         println!("task: {} counter: {} arg:{}", id, i, para.str);
-    //     }
-    //     println!("TASK 3 FINISHED");
-    //     guard(r_ptr);
-    // },&args2 as *const MyType as u64);
     runtime.run();
     println!("stackful_coroutine PASSED");
-
     0
 }   
