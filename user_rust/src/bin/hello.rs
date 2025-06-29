@@ -64,7 +64,7 @@ fn main() -> i32 {
         let arg =  args as *const MyType;
         
         let para = unsafe {*arg};
-        wait_task(r_ptr, 2);
+        wait_task(r_ptr);
         for i in 0..4 {
             println!("task: {} counter: {} arg:{}", id, i, para.str);
             yield_task(r_ptr);
