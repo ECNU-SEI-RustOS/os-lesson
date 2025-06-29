@@ -6,6 +6,7 @@ use super::config::*;
 #[derive(PartialEq, Eq, Debug)]
 pub enum TaskState {
     Available,
+    Sleep,
     Ready,
     Running,
 }
