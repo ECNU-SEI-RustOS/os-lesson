@@ -1,12 +1,15 @@
 mod task;
 mod config;
-
+mod mutex;
 use alloc::vec;
 use alloc::vec::Vec;
+
 use config::{DEFAULT_STACK_SIZE,MAX_TASKS};
 use task::{TaskContext,Task,TaskState};
+use mutex::*;
+use core::{arch::global_asm};
 
-use core::{arch::global_asm, default};
+
 global_asm!(include_str!("./switch.S"));
 unsafe extern  "C" {
     fn switch(old: *mut TaskContext, new: *const TaskContext);
@@ -14,6 +17,7 @@ unsafe extern  "C" {
 pub struct Runtime {
     tasks: Vec<Task>,
     current: usize,
+    waits: Vec<usize>
 }
 
 impl Runtime{
@@ -31,8 +35,8 @@ impl Runtime{
         let mut tasks = vec![base_task];
         let mut available_tasks: Vec<Task> = (1..MAX_TASKS).map(|i| Task::new(i)).collect();
         tasks.append(&mut available_tasks);
-
-        Runtime { tasks, current: 0 }
+        let waits = vec![0;MAX_TASKS];
+        Runtime { tasks, current: 0, waits}
     }
 
     /// This is cheating a bit, but we need a pointer to our Runtime stored so we can call yield on it even if
@@ -61,12 +65,28 @@ impl Runtime{
             self.t_yield();
         }
     }
-
+    fn t_wait(&mut self, id: usize) {
+        if self.current != 0 {
+            self.tasks[self.current].state = TaskState::Sleep;
+            self.waits[self.current] = id;
+            self.t_yield();
+        }
+    }
+    fn t_signal(&mut self, id: usize){
+        if self.waits[id] == self.current {
+            self.tasks[id].state = TaskState::Ready;
+            self.waits[id] = 0;
+        }
+        self.t_yield();
+    }
+    fn t_gettid(&mut self) -> usize{
+        self.current
+    }
     #[inline(never)]
     fn t_yield(&mut self) -> bool {
-        let mut pos = self.current;
+        let mut pos = (self.current + 1) % MAX_TASKS;
         let mut temp = 0usize;
-        while self.tasks[pos].state != TaskState::Ready {
+        while self.tasks[pos].state == TaskState::Sleep || self.tasks[pos].state == TaskState::Available {
             pos += 1;
             if pos == self.tasks.len() {
                 pos = 1;
@@ -76,14 +96,18 @@ impl Runtime{
                 temp = 1;
             }
             if pos == 0 && pos == self.current {
-                return false;
+                if !self.waits.iter().any(|&x| x != 0){
+                    return false;
+                }
             }
 
         }
-
-        if self.tasks[self.current].state != TaskState::Available {
-            self.tasks[self.current].state = TaskState::Ready;
+        if self.tasks[self.current].state != TaskState::Sleep {
+            if self.tasks[self.current].state != TaskState::Available {
+                self.tasks[self.current].state = TaskState::Ready;
+            }
         }
+
 
         self.tasks[pos].state = TaskState::Running;
         let old_pos = self.current;
@@ -119,7 +143,7 @@ impl Runtime{
     /// executing that first when we are scheuled to run.
     ///
     /// Lastly we set the state as `Ready` which means we have work to do and is ready to do it.
-    pub fn spawn(&mut self, f: fn(*const Runtime, u64), params: u64) {
+    pub fn spawn(&mut self, f: fn(*const Runtime, u64), params: u64) -> usize {
         let available = self
             .tasks
             .iter_mut()
@@ -145,6 +169,8 @@ impl Runtime{
             available.ctx.params = params;
         }
         available.state = TaskState::Ready;
+
+        available.id
     }
 }
 
@@ -165,4 +191,25 @@ pub fn yield_task(r_ptr: *const Runtime) {
         let rt_ptr = r_ptr as *mut Runtime;
         (*rt_ptr).t_yield();
     };
+}
+
+pub fn wait_task(r_ptr: *const Runtime, id: usize) {
+    unsafe {
+        let rt_ptr = r_ptr as *mut Runtime;
+        (*rt_ptr).t_wait(id);
+    };
+}
+
+pub fn signal_task(r_ptr: *const Runtime, id: usize) {
+    unsafe {
+        let rt_ptr = r_ptr as *mut Runtime;
+        (*rt_ptr).t_signal(id);
+    };
+}
+
+pub fn gettid_task(r_ptr: *const Runtime)-> usize{
+    unsafe {
+        let rt_ptr = r_ptr as *mut Runtime;
+        (*rt_ptr).t_gettid()
+    }
 }
