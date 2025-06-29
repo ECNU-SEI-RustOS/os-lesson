@@ -60,6 +60,12 @@ impl Runtime{
     /// If the current task is not our base task we set its state to Available. It means
     /// we're finished with it. Then we yield which will schedule a new task to be run.
     fn t_return(&mut self) {
+        for (index, value) in self.waits.iter_mut().enumerate() {
+            if *value == usize::MAX || *value == self.current {
+                *value = 0;
+                self.tasks[index].state = TaskState::Ready;
+            }
+        }
         if self.current != 0 {
             self.tasks[self.current].state = TaskState::Available;
             self.t_yield();
