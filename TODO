@@ -1,4 +1,0 @@
-1. 从console读入的标准输入[ ]
-2. time intrrupt[x]
-3. make fs.img 所输入的文件有上限[x]
-4. 添加kernel线程[ ]
