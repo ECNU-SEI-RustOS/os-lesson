@@ -36,7 +36,7 @@ main(void)
       exit(1);
     }
 
-    for(;;){
+    while(1){
       // this call to wait() returns if the shell exits,
       // or if a parentless process exits.
       wpid = wait((int *) 0);

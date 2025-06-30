@@ -1,5 +1,6 @@
-KERNEL = target/riscv64gc-unknown-none-elf/debug/xv6-rust
+KERNEL = kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
+USER_C_TARGET = $(USER)/target
 INCLUDE = include
 CPUS = 3
 
@@ -49,23 +50,27 @@ qemu-gdb: $(KERNEL) .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
+$(KERNEL):
+	cd kernel && cargo build
+
 asm: $(KERNEL)
 	$(OBJDUMP) -S $(KERNEL) > kernel.S
 
 clean:
 	rm -rf kernel.S
-	cargo clean
+	cd kernel && cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
 	mkfs/mkfs .gdbinit xv6.out \
 	$(USER)/usys.S \
-	$(UPROGS)
+	$(UPROGS) \
+	$(UPROGS_RUST)
 
-$(USER)/initcode: $(USER)/initcode.S
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Iinclude -c $(USER)/initcode.S -o $(USER)/initcode.o
-	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $(USER)/initcode.out $(USER)/initcode.o
-	$(OBJCOPY) -S -O binary $(USER)/initcode.out $(USER)/initcode
-	$(OBJDUMP) -S $(USER)/initcode.o > $(USER)/initcode.asm
+# $(USER)/initcode: $(USER)/initcode.S
+# 	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Iinclude -c $(USER)/initcode.S -o $(USER)/initcode.o
+# 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $(USER)/initcode.out $(USER)/initcode.o
+# 	$(OBJCOPY) -S -O binary $(USER)/initcode.out $(USER)/initcode
+# 	$(OBJDUMP) -S $(USER)/initcode.o > $(USER)/initcode.asm
 
 ULIB = $(USER)/ulib.o $(USER)/usys.o $(USER)/printf.o $(USER)/umalloc.o
 
@@ -96,32 +101,34 @@ print-gdbport:
 # that disk image changes after first build are persistent until clean.  More
 # details:
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
+
+TARGET_DIR_C := user
+
+# 使用 wildcard 匹配文件
+USER_C_FILES := $(wildcard $(TARGET_DIR_C)/*.c)
+USER_C_PRO_BIN := $(patsubst $(TARGET_DIR_C)/%.c,$(TARGET_DIR_C)/_%,$(USER_C_FILES))
+UPROGS =$(USER_C_PRO_BIN)
+
+TARGET_DIR_RUST := user_rust
+# 使用 wildcard 匹配文件
+USER_RUST_FILES := $(wildcard $(TARGET_DIR_RUST)/src/bin/*.rs)
+USER_RUST_PRO_BIN := $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(USER_RUST_FILES))
+UPROGS_RUST =  $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,user/_%,$(USER_RUST_FILES))
 .PRECIOUS: %.o
 
-UPROGS=\
-	$(USER)/_cat\
-	$(USER)/_echo\
-	$(USER)/_forktest\
-	$(USER)/_grep\
-	$(USER)/_init\
-	$(USER)/_kill\
-	$(USER)/_ln\
-	$(USER)/_ls\
-	$(USER)/_mkdir\
-	$(USER)/_rm\
-	$(USER)/_sh\
-	$(USER)/_stressfs\
-	$(USER)/_usertests\
-	$(USER)/_grind\
-	$(USER)/_wc\
-	$(USER)/_zombie\
+user_rust_build:
+	cd user_rust && $(MAKE) build
+	$(foreach file,$(UPROGS_RUST),\
+		cp  $(patsubst user/_%,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(file)) $(file);  \
+	)
 	$(USER)/_pgtbltest\
 	$(USER)/_bttest\
 	$(USER)/_alarmtest\
 
-fs.img: mkfs/mkfs README $(UPROGS)
-	mkfs/mkfs fs.img README $(UPROGS)
-
+fs.img: mkfs/mkfs README $(UPROGS) user_rust_build
+	mkfs/mkfs fs.img README $(UPROGS) $(UPROGS_RUST)
+show:
+	@echo $(UPROGS_RUST)
 -include user/*.d
 
 grade:
