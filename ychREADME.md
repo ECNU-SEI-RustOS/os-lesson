@@ -852,8 +852,23 @@ pub struct ProcessControlBlock {
     pub children: Vec<Arc<ProcessControlBlock>>,
     pub exit_code: i32,
     pub fd_table: [Option<Arc<File>>; NFILE],
-    pub signals: SignalFlags,
     pub tasks: Vec<Option<Arc<TaskControlBlock>>>,
+}
+```
+
+```rust
+
+pub struct TaskControlBlock {
+    pub tid: usize,
+    pub process: Weak<ProcessControlBlock>,
+    pub kstack: KernelStack,
+    // mutable
+    pub ustack_base: usize,
+    pub process: Weak<ProcessControlBlock>,
+    pub trap_cx_ptr: usize,
+    pub task_cx: TaskContext,
+    pub task_status: TaskStatus,
+    pub exit_code: Option<i32>,
 }
 ```
 
