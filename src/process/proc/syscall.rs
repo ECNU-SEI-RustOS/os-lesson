@@ -18,6 +18,9 @@ use super::{Proc, elf};
 
 pub type SysResult = Result<usize, ()>;
 
+pub static SYSCALL_NAME: [&str; 24] = ["","fork","exit","wait","pipe","read","kill","exec","fstat","chdir","dup",
+"getpid","sbrk","sleep","uptime","open","write","mknod","unlink","link","mkdir","close","trace","sysinfo"];
+
 pub trait Syscall {
     fn sys_fork(&mut self) -> SysResult;
     fn sys_exit(&mut self) -> SysResult;
@@ -43,6 +46,7 @@ pub trait Syscall {
     fn sys_sigalarm(&mut self) -> SysResult;
     fn sys_sigreturn(&mut self) -> SysResult;
     fn sys_pgaccess(&mut self) -> SysResult;
+    fn sys_trace(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -508,6 +512,17 @@ impl Syscall for Proc {
 
         drop(file);
         Ok(0)
+    }
+
+    fn sys_trace(&mut self) -> SysResult {
+        let input_mask = self.arg_i32(0);
+        if input_mask < 0 {
+            Err(())
+        }
+        else {
+            (*self.data.get_mut()).tracemask = input_mask as usize;
+            Ok(0)
+        }
     }
 }
 
