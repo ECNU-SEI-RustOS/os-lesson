@@ -3,6 +3,9 @@ use core::panic;
 use core::sync::atomic::Ordering;
 
 use crate::driver::{console, PANICKED};
+use crate::mm::kvm_pa;
+use crate::mm::VirtAddr;
+use crate::process::CPU_MANAGER;
 use crate::spinlock::SpinLock;
 
 /// ZST Print struct to sequence printing printing across multiple CPUS.
@@ -89,5 +92,23 @@ pub mod tests {
 
         NSMP.fetch_sub(1, Ordering::Relaxed);
         while NSMP.load(Ordering::Relaxed) != 0 {}
+    }
+}
+
+pub fn backtrace() {
+    //let pgt = unsafe { CPU_MANAGER.my_proc().data.get_mut().pagetable.as_mut().unwrap() };
+    let mut fp: usize;
+    unsafe{
+        core::arch::asm!("mv {}, fp", out(reg) fp);
+    }
+    //println!("fp:0x{:x}", fp);
+    let mut ra: usize;
+    let barrier: usize = (fp + crate::consts::PGSIZE - 1) & !(crate::consts::PGSIZE - 1);
+    println!("backtrace:");
+    while fp < barrier {
+        ra = unsafe{ kvm_pa(VirtAddr::from_raw(*((fp - 8) as *const usize))) } as usize;
+        println!("0x{:x}", ra);
+        fp = unsafe { *((fp - 16) as *const usize) };
+        //println!("0x{:x}", fp);
     }
 }

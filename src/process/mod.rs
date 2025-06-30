@@ -206,9 +206,11 @@ impl ProcManager {
                     // holding the process's excl lock,
                     // so manager can modify its private data
                     let pd = p.data.get_mut();
+                    let pa = p.alarm.get_mut();
 
                     // alloc trapframe
                     pd.tf = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    pa.alarm_frame = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
                     debug_assert!(pd.pagetable.is_none());
                     match PageTable::alloc_proc_pagetable(pd.tf as usize) {
@@ -522,8 +524,10 @@ impl ProcManager {
                 parent_map[i].take();
                 self.table[i].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[i].data.get().as_mut().unwrap() };
+                let child_alarm = unsafe { self.table[i].alarm.get().as_mut().unwrap() };
                 child_data.cleanup();
-                child_excl.cleanup();           
+                child_excl.cleanup();  
+                child_alarm.cleanup();        
                 return Ok(child_pid)
             }
 

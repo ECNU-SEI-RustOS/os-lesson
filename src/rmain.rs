@@ -14,7 +14,7 @@ use crate::trap::trap_init_hart;
 /// `STARTED` 表示主核（cpuid == 0）是否完成了内核的全局初始化。
 /// 所有从核（cpuid != 0）在启动时会自旋等待该变量变为 `true`，以确保主核先完成必要的系统初始化，
 /// 如堆空间、页表、设备中断控制器（PLIC）、块缓存等资源的设置。
-static STARTED: AtomicBool = AtomicBool::new(false);
+pub static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// 内核主入口函数，完成多核系统中各 hart（硬件线程）的初始化流程。
 ///
