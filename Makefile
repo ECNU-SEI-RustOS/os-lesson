@@ -28,14 +28,24 @@ LDFLAGS = -z max-page-size=4096
 QEMU = qemu-system-riscv64
 QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 3G -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-QEMUGDB = -gdb tcp::26000
 
-qemu-gdb: $(KERNEL) fs.img
-	@echo "*** Now run 'gdb' in another window." 1>&2
-	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
+GDBPORT = $(shell expr `id -u` % 5000 + 25000)
+QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+	then echo "-gdb tcp::$(GDBPORT)"; \
+	else echo "-s -p $(GDBPORT)"; fi)
 
 $(KERNEL):
 	cargo build
+
+qemu: $(KERNEL) fs.img
+	$(QEMU) $(QEMUOPTS)
+
+.gdbinit: .gdbinit.tmpl-riscv
+	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
+
+qemu-gdb: $(KERNEL) .gdbinit fs.img
+	@echo "*** Now run 'gdb' in another window." 1>&2
+	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
 asm: $(KERNEL)
 	$(OBJDUMP) -S $(KERNEL) > kernel.S
@@ -45,7 +55,8 @@ clean:
 	cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
-	mkfs/mkfs $(USER)/usys.S \
+	mkfs/mkfs .gdbinit xv6.out \
+	$(USER)/usys.S \
 	$(UPROGS)
 
 $(USER)/initcode: $(USER)/initcode.S
@@ -76,6 +87,9 @@ $(USER)/_forktest: $(USER)/forktest.o $(ULIB)
 mkfs/mkfs: mkfs/mkfs.c $(INCLUDE)/fs.h $(INCLUDE)/param.h
 	gcc -Werror -Wall -I. -o mkfs/mkfs mkfs/mkfs.c
 
+print-gdbport:
+	@echo $(GDBPORT)
+
 # Prevent deletion of intermediate files, e.g. cat.o, after first build, so
 # that disk image changes after first build are persistent until clean.  More
 # details:
@@ -100,7 +114,14 @@ UPROGS=\
 	$(USER)/_wc\
 	$(USER)/_zombie\
 
-fs.img: mkfs/mkfs README.md $(UPROGS)
-	mkfs/mkfs fs.img README.md $(UPROGS)
+
+fs.img: mkfs/mkfs README $(UPROGS)
+	mkfs/mkfs fs.img README $(UPROGS)
 
 -include user/*.d
+
+grade:
+	@echo $(MAKE) clean
+	@$(MAKE) clean || \
+          (echo "'make clean' failed.  HINT: Do you have another running instance of xv6?" && exit 1)
+	./grade-lab-syscall
