@@ -10,6 +10,7 @@ use core::cell::UnsafeCell;
 
 use crate::consts::{PGSIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, RawPage, RawSinglePage};
+use crate::process::trapframe::UsysPage;
 use crate::register::{satp, sepc, sstatus};
 use crate::spinlock::{SpinLock, SpinLockGuard};
 use crate::trap::user_trap;
@@ -130,6 +131,7 @@ pub struct ProcData {
     open_files: [Option<Arc<File>>; NFILE],
     /// 指向 TrapFrame 的裸指针，保存用户态寄存器临时值等信息。
     pub tf: *mut TrapFrame,
+    pub up: *mut UsysPage,
     /// 进程的用户页表，管理用户地址空间映射。
     pub pagetable: Option<Box<PageTable>>,
     /// 进程当前工作目录的 inode。
@@ -146,6 +148,7 @@ impl ProcData {
             name: [0; 16],
             open_files: array![_ => None; NFILE],
             tf: ptr::null_mut(),
+            up: ptr::null_mut(),
             pagetable: None,
             cwd: None,
         }
@@ -309,6 +312,11 @@ impl ProcData {
         self.tf = ptr::null_mut();
         if !tf.is_null() {
             unsafe { RawSinglePage::from_raw_and_drop(tf as *mut u8); }
+        }
+        let up = self.up;
+        self.up = ptr::null_mut();
+        if !up.is_null() {
+            unsafe { RawSinglePage::from_raw_and_drop(up as *mut u8); }
         }
         let pgt = self.pagetable.take();
         if let Some(mut pgt) = pgt {
@@ -554,6 +562,7 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+            22 => self.sys_pgaccess(),
             22 => self.sys_sigalarm(),
             23 => self.sys_sigreturn(),
             _ => {

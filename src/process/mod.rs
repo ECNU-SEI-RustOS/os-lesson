@@ -7,6 +7,7 @@ use core::sync::atomic::Ordering;
 
 use crate::consts::{NPROC, PGSIZE, TRAMPOLINE, fs::ROOTDEV};
 use crate::mm::{kvm_map, PhysAddr, PteFlag, VirtAddr, RawPage, RawSinglePage, PageTable, RawQuadPage};
+use crate::process::trapframe::UsysPage;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
 use crate::fs;
@@ -210,10 +211,12 @@ impl ProcManager {
 
                     // alloc trapframe
                     pd.tf = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    pd.up = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut UsysPage };
                     pa.alarm_frame = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
+                    (unsafe { &mut *pd.up }).pid = new_pid as u32;
                     debug_assert!(pd.pagetable.is_none());
-                    match PageTable::alloc_proc_pagetable(pd.tf as usize) {
+                    match PageTable::alloc_proc_pagetable(pd.tf as usize, pd.up as usize) {
                         Some(pgt) => pd.pagetable = Some(pgt),
                         None => {
                             unsafe { RawSinglePage::from_raw_and_drop(pd.tf as *mut u8); }

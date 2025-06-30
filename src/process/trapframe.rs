@@ -70,3 +70,9 @@ impl TrapFrame {
         self.epc += 4;
     }
 }
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct UsysPage {
+    pub pid: u32,
+}

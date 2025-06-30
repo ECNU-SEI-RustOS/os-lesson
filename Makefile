@@ -115,6 +115,7 @@ UPROGS=\
 	$(USER)/_grind\
 	$(USER)/_wc\
 	$(USER)/_zombie\
+	$(USER)/_pgtbltest\
 	$(USER)/_bttest\
 	$(USER)/_alarmtest\
 

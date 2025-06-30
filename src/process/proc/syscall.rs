@@ -7,7 +7,9 @@ use core::convert::TryInto;
 use core::fmt::Display;
 use core::mem;
 
+use crate::consts::PGSIZE;
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
+use crate::mm::VirtAddr;
 use crate::process::PROC_MANAGER;
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::trap;
@@ -40,6 +42,7 @@ pub trait Syscall {
     fn sys_close(&mut self) -> SysResult;
     fn sys_sigalarm(&mut self) -> SysResult;
     fn sys_sigreturn(&mut self) -> SysResult;
+    fn sys_pgaccess(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -167,6 +170,12 @@ impl Syscall for Proc {
                     Ok(ret) => result = Ok(ret),
                     Err(s) => error = s,
                 }
+                let guard = self.excl.lock();
+                if guard.pid == 1 {
+                    let data = self.data.get_mut();
+                    data.pagetable.as_ref().unwrap().vm_print(0);
+                }
+                drop(guard);
                 break       
             }
 
@@ -498,23 +507,6 @@ impl Syscall for Proc {
         println!("[{}].close(fd={}), file={:?}", self.excl.lock().pid, fd, file);
 
         drop(file);
-        Ok(0)
-    }
-
-    fn sys_sigalarm(&mut self) -> SysResult {
-        let interval = self.arg_i32(0) as usize;
-        let handler = self.arg_addr(1) as isize;
-        let p = self.alarm.get_mut();
-        p.interval = interval;
-        p.handler_addr = handler;
-        Ok(0)
-    }
-
-    fn sys_sigreturn(&mut self) -> SysResult {
-        let pa = self.alarm.get_mut();
-        let pd = self.data.get_mut();
-        unsafe { core::ptr::copy_nonoverlapping(pa.alarm_frame, pd.tf, 1) };
-        pa.handler_called = false;
         Ok(0)
     }
 }

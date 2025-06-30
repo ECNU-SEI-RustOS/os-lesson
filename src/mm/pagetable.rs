@@ -1,10 +1,11 @@
 use array_macro::array;
 
 use alloc::boxed::Box;
+use core::sync::atomic::AtomicBool;
 use core::{cmp::min, convert::TryFrom};
 use core::ptr;
 
-use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME};
+use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, TRAPFRAME, USERTEXT, USYSCALL};
 use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
 
 bitflags! {
@@ -70,6 +71,16 @@ impl PageTableEntry {
     #[inline]
     pub fn is_valid(&self) -> bool {
         (self.data & (PteFlag::V.bits())) > 0
+    }
+
+    #[inline]
+    pub fn is_access(&self) -> bool {
+        (self.data & (PteFlag::A.bits())) > 0
+    }
+
+    #[inline]
+    pub fn clear_access(&mut self) {
+        self.data &= !PteFlag::A.bits()
     }
 
     #[inline]
@@ -308,7 +319,7 @@ impl PageTable {
 
     /// 与 [walk_alloc] 功能相同，
     /// 但如果页表不存在时不会分配新的页表。
-    fn walk_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
+    pub fn walk_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
         let mut pgt = self as *mut PageTable;
         for level in (1..=2).rev() {
             let pte = unsafe { &mut pgt.as_mut().unwrap().data[va.page_num(level)] };
@@ -422,7 +433,7 @@ impl PageTable {
     /// - 调用者必须保证 `trapframe` 物理地址有效且正确。  
     /// - 返回的页表应妥善管理，避免内存泄漏或数据竞争。  
     /// - 适合在进程创建时调用，且需保证调用时无并发冲突。
-    pub fn alloc_proc_pagetable(trapframe: usize) -> Option<Box<Self>> {
+    pub fn alloc_proc_pagetable(trapframe: usize, usyspage: usize) -> Option<Box<Self>> {
         extern "C" {
             fn trampoline();
         }
@@ -444,7 +455,14 @@ impl PageTable {
                 PteFlag::R | PteFlag::W,
             )
             .ok()?;
-
+        pagetable
+            .map_pages(
+                VirtAddr::from(USYSCALL),
+                PGSIZE,
+                PhysAddr::try_from(usyspage).unwrap(),
+                PteFlag::R | PteFlag::U,
+            )
+            .ok()?;
         Some(pagetable)
     }
 
@@ -472,6 +490,7 @@ impl PageTable {
     pub fn dealloc_proc_pagetable(&mut self, proc_size: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
         self.uvm_unmap(TRAPFRAME.into(), 1, false);
+        self.uvm_unmap(USYSCALL.into(), 1, false);
         // free physical memory
         if proc_size > 0 {
             self.uvm_unmap(0, pg_round_up(proc_size)/PGSIZE, true);
@@ -915,7 +934,31 @@ impl PageTable {
             debug_assert_eq!(src, va.as_usize());
         }
     }
+
+    pub fn vm_print(&self, level: usize)
+    {
+        if INIT_VM_PRINT.swap(false, core::sync::atomic::Ordering::Relaxed) {
+            println!("page table {:p}", &(self.data));
+        }
+        for (idx, pte) in self.data.iter().enumerate() {
+            if pte.is_valid() {
+                if level == 0 {
+                    println!("..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                    (unsafe { &*pte.as_page_table() }).vm_print(1);
+                }
+                if level == 1 {
+                    println!(".. ..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                    (unsafe { &*pte.as_page_table() }).vm_print(2);
+                }
+                if level == 1 {
+                    println!(".. .. ..{}: pte {:#x} pa {:p}", idx, pte.data, pte.as_page_table());
+                }
+            }
+        }
+    }
 }
+
+static INIT_VM_PRINT: AtomicBool = AtomicBool::new(true);
 
 impl Drop for PageTable {
     /// # 功能说明
