@@ -1,4 +1,4 @@
-<img src="D:\Document\Project\操作系统大赛\图片\资源 1.png" style="zoom: 50%;" />
+<img src="handbook\资源 1.png" style="zoom: 50%;" />
 
 ------
 
@@ -24,7 +24,7 @@
 
 - **项目说明文档：** 初赛文档 - 基于Rust与xv6的操作系统教学方案设计与实现.pdf
 - **项目汇报PPT：** 初赛PPT - 基于Rust与xv6的操作系统教学方案设计与实现.pptx
-- **项目演示视频：**
+- **项目演示视频：** [初赛视频](https://pan.baidu.com/s/1iQTjRFhfd9DTSX6JBTSang?pwd=0000)
 
 ------
 
