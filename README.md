@@ -1,4 +1,4 @@
-<img src="handbook\资源 1.png" style="zoom: 50%;" />
+<img src="handbook/logo.png" style="zoom: 50%;" />
 
 ------
 
