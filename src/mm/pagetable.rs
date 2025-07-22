@@ -2,7 +2,7 @@ use array_macro::array;
 
 use alloc::boxed::Box;
 use core::{cmp::min, convert::TryFrom};
-use core::ptr;
+use core::ptr::{self, NonNull};
 
 use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME};
 use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
@@ -140,7 +140,8 @@ impl PageTableEntry {
     /// - 返回的裸指针由调用者管理，需妥善释放以避免内存泄漏或悬挂指针。
     unsafe fn try_clone(&self) -> Result<*mut u8, ()> {
         if !self.is_valid() {
-            panic!("cloning not valid pte");
+            return Err(());
+            //panic!("cloning not valid pte");
         }
         let pa = self.as_phys_addr().into_raw();
         let mem = RawSinglePage::try_new_uninit().map_err(|_| ())?;
@@ -172,7 +173,7 @@ impl PageTableEntry {
                 drop(unsafe { Box::from_raw(self.as_page_table()) });
                 self.data = 0;
             } else {
-                panic!("freeing a pte leaf")
+                //panic!("freeing a pte leaf")
             }
         }
     }
@@ -643,12 +644,22 @@ impl PageTable {
         }
 
         for ca in (va..(va+PGSIZE*count)).step_by(PGSIZE) {
-            let pte = self.walk_mut(unsafe {VirtAddr::from_raw(ca)})
-                                        .expect("unable to find va available");
+            //println!("unmap! freeing:{}", freeing);
+            let pte;
+            let mut null = PageTableEntry { data: 0 };
+            let pte_option = unsafe { self.walk_mut( VirtAddr::from_raw(ca)) };
+            if let Some(inn) = pte_option {
+                pte = inn;
+            }
+            else {
+                return;
+            }
             if !pte.is_valid() {
-                panic!("this pte is not valid");
+                return;
+                //panic!("this pte is not valid");
             }
             if !pte.is_leaf() {
+                //return;
                 panic!("this pte is not a leaf");
             }
             if freeing {
@@ -656,6 +667,7 @@ impl PageTable {
                 unsafe { RawSinglePage::from_raw_and_drop(pa.into_raw() as *mut u8); }
             }
             pte.write_zero();
+            //println!("unmap finish!");
         }
     }
 
@@ -709,7 +721,15 @@ impl PageTable {
     pub fn uvm_copy(&mut self, child_pgt: &mut Self, size: usize) -> Result<(), ()> {
         for i in (0..size).step_by(PGSIZE) {
             let va = unsafe { VirtAddr::from_raw(i) };
-            let pte = self.walk(va).expect("pte not exist");
+            //println!("copy");
+            let pte;
+            let pte_option = self.walk(va);
+            if let Some(inn) = pte_option {
+                pte = inn;
+            }
+            else {
+                return Err(());
+            }
             let mem = unsafe { pte.try_clone() };
             if let Ok(mem) = mem {
                 let perm = pte.read_perm();
@@ -719,6 +739,9 @@ impl PageTable {
                     continue
                 }
                 unsafe { RawSinglePage::from_raw_and_drop(mem); }
+            }
+            else {
+                return Ok(());
             }
             child_pgt.uvm_unmap(0, i/PGSIZE, true);
             return Err(())

@@ -11,6 +11,7 @@ pub enum ScauseType {
     IntSSoft,
     IntSExt,
     ExcUEcall,
+    PageFault,
 }
 
 #[inline]
@@ -26,6 +27,8 @@ pub fn get_scause() -> ScauseType {
         INTERRUPT_SUPERVISOR_SOFTWARE => ScauseType::IntSSoft,
         INTERRUPT_SUPERVISOR_EXTERNAL => ScauseType::IntSExt,
         EXCEPTION_ECALL_USER => ScauseType::ExcUEcall,
+        13 => ScauseType::PageFault,
+        15 => ScauseType::PageFault,
         _ => ScauseType::Unknown,
     }
 }

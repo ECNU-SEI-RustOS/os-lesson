@@ -1,9 +1,11 @@
 //! Trap handler between user/kernel space and kernel space
 
-use core::num::Wrapping;
+use core::alloc::GlobalAlloc;
+use core::{alloc::Layout, num::Wrapping};
 use core::sync::atomic::Ordering;
 
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{PROC_MANAGER, Proc}};
+use crate::mm::{pg_round_down, PhysAddr, PteFlag, VirtAddr};
+use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, mm::KERNEL_HEAP, process::{Proc, PROC_MANAGER}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self, ScauseType}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -71,6 +73,20 @@ pub unsafe extern fn user_trap() {
             p.check_abondon(-1);
             p.syscall();
             p.check_abondon(-1);
+        }
+        ScauseType::PageFault => {
+            //println!("!!");
+            let layout = Layout::from_size_align(4096, 4096).expect("Invalid layout");
+            // 分配 4KB 的内存空间
+            let ptr = GlobalAlloc::alloc(&KERNEL_HEAP, layout) as *mut u8;
+            if ptr.is_null() {
+                p.killed = true.into();
+            }
+            p.data.get_mut().pagetable.as_mut().unwrap().map_pages(
+                VirtAddr::from_raw(pg_round_down(stval::read())),
+                4096,
+                PhysAddr::from_raw(ptr as usize),
+                PteFlag::R | PteFlag::W | PteFlag::U);
         }
         ScauseType::Unknown => {
             println!("scause {:#x}", scause::read());
@@ -155,6 +171,9 @@ pub unsafe fn kerneltrap() {
         }
         ScauseType::ExcUEcall => {
             panic!("ecall from supervisor mode");
+        }
+        ScauseType::PageFault => {
+            
         }
         ScauseType::Unknown => {
             println!("scause {:#x}", scause::read());
