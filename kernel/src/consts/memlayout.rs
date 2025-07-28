@@ -27,12 +27,12 @@ pub const CLINT_MTIME: ConstAddr = CLINT.const_add(0xbff8);
 
 /// qemu puts UART registers here in physical memory.
 pub const UART0: ConstAddr = ConstAddr(0x10000000);
-pub const UART0_MAP_SIZE: usize = PGSIZE;
+pub const UART0_MAP_SIZE: usize = PAGE_SIZE;
 pub const UART0_IRQ: usize = 10;
 
 /// virtio mmio interface
 pub const VIRTIO0: ConstAddr = ConstAddr(0x10001000);
-pub const VIRTIO0_MAP_SIZE: usize = PGSIZE;
+pub const VIRTIO0_MAP_SIZE: usize = PAGE_SIZE;
 pub const VIRTIO0_IRQ: usize = 1;
 
 /// qemu puts programmable interrupt controller here.
@@ -43,16 +43,16 @@ pub const PLIC_MAP_SIZE: usize = 0x400000;
 /// for use by the kernel and user pages
 /// from physical address 0x80000000 to PHYSTOP.
 pub const KERNBASE: ConstAddr = ConstAddr(0x80000000);
-pub const PHYSTOP: ConstAddr = KERNBASE.const_add(128 * 1024 * 1024);
-
+pub const PHYSTOP: ConstAddr = KERNBASE.const_add((128 + 64) * 1024 * 1024);
+pub const KERNEL_HEAP_END: ConstAddr = KERNBASE.const_add(128 * 1024 * 1024);
 /// map the trampoline page to the highest address,
 /// in both user and kernel space.
 /// 0x3FFFFFF000
-pub const TRAMPOLINE: ConstAddr = MAXVA.const_sub(PGSIZE);
+pub const TRAMPOLINE: ConstAddr = MAXVA.const_sub(PAGE_SIZE);
 
 /// trapframe is below the trampoline
 /// 0x3FFFFFE000
-pub const TRAPFRAME: ConstAddr = TRAMPOLINE.const_sub(PGSIZE);
+pub const TRAPFRAME: ConstAddr = TRAMPOLINE.const_sub(PAGE_SIZE);
 
 /// user text/code start address
 pub const USERTEXT: ConstAddr = ConstAddr(0);
