@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use alloc::str;
 use core::{cmp::min, convert::TryFrom, mem::{self, MaybeUninit}};
 
-use crate::{consts::{MAXARGLEN, PAGE_SIZE, MAXARG}, sleeplock::SleepLockGuard};
+use crate::{consts::{MAXARG, MAXARGLEN, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
 use crate::mm::{Address, PageTable, Addr, VirtAddr, pg_round_up};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 
@@ -95,7 +95,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     let pdata = process.data.get_mut();
     let mut pgt;
     match PageTable::alloc_proc_pagetable(pdata.trapframe as usize,pid) {
-        Some(p) => pgt = p,
+        Some(res) => pgt = res,
         None => {
             drop(idata); drop(inode); LOG.end_op();
             return Err("mem not enough")
@@ -150,14 +150,14 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // allocate two page for user stack
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
-    match pgt.uvm_alloc(proc_size, proc_size + 2*PAGE_SIZE) {
+    match pgt.uvm_alloc(proc_size, proc_size + USER_STACK_SIZE + PAGE_SIZE) {
         Ok(ret_size) => proc_size = ret_size,
         Err(_) => {
             pgt.dealloc_proc_pagetable(proc_size,pid);
             return Err("not enough uvm for user stack")
         },
     }
-    pgt.uvm_clear(proc_size - 2*PAGE_SIZE);
+    pgt.uvm_clear(proc_size - USER_STACK_SIZE - PAGE_SIZE);
     let mut stack_pointer = proc_size;
     let stack_base = stack_pointer - PAGE_SIZE;
 

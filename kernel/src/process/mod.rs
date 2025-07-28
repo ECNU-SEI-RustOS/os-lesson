@@ -5,7 +5,8 @@ use core::mem;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::consts::{fs::ROOTDEV, NPROC, PAGE_SIZE, TRAMPOLINE};
+use crate::consts::KERNEL_STACK_SIZE;
+use crate::consts::{fs::ROOTDEV, NPROC, TRAMPOLINE};
 use crate::fs;
 use crate::mm::{
     kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
@@ -127,7 +128,7 @@ impl ProcManager {
             kvm_map(
                 VirtAddr::try_from(va).unwrap(),
                 PhysAddr::try_from(pa).unwrap(),
-                PAGE_SIZE * 4,
+                KERNEL_STACK_SIZE,
                 PteFlag::R | PteFlag::W,
             );
             p.data.get_mut().set_kstack(va);
@@ -694,5 +695,5 @@ unsafe fn fork_ret() -> ! {
 /// - 返回 `usize` 类型的虚拟地址，表示对应进程内核栈的起始地址（栈顶地址）。
 #[inline]
 fn kstack(pos: usize) -> usize {
-    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * 5 * PAGE_SIZE
+    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * KERNEL_STACK_SIZE
 }
