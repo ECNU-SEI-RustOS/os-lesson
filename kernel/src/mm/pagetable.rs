@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::{cmp::min, convert::TryFrom};
 use core::ptr;
 use crate::consts::ConstAddr;
-use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME, };
+use crate::consts::{PGSHIFT, PAGE_SIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME, };
 use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
 
 bitflags! {
@@ -144,7 +144,7 @@ impl PageTableEntry {
         }
         let pa = self.as_phys_addr().into_raw();
         let mem = RawSinglePage::try_new_uninit().map_err(|_| ())?;
-        ptr::copy_nonoverlapping(pa as *const u8, mem, PGSIZE);
+        ptr::copy_nonoverlapping(pa as *const u8, mem, PAGE_SIZE);
         Ok(mem)
     }
 
@@ -431,7 +431,7 @@ impl PageTable {
         pagetable
             .map_pages(
                 VirtAddr::from(TRAMPOLINE),
-                PGSIZE,
+                PAGE_SIZE,
                 PhysAddr::try_from(trampoline as usize).unwrap(),
                 PteFlag::R | PteFlag::X,
             )
@@ -439,7 +439,7 @@ impl PageTable {
         pagetable
             .map_pages(
                 VirtAddr::from(trapframe_from_pid(pid)),
-                PGSIZE,
+                PAGE_SIZE,
                 PhysAddr::try_from(trapframe).unwrap(),
                 PteFlag::R | PteFlag::W,
             )
@@ -474,7 +474,7 @@ impl PageTable {
         self.uvm_unmap(trapframe_from_pid(pid).into(), 1, false);
         // free physical memory
         if proc_size > 0 {
-            self.uvm_unmap(0, pg_round_up(proc_size)/PGSIZE, true);
+            self.uvm_unmap(0, pg_round_up(proc_size)/PAGE_SIZE, true);
         }
     }
 
@@ -501,14 +501,14 @@ impl PageTable {
     /// - 函数假设代码大小不会超过一页，否则会 panic。  
     /// - 适合在进程创建早期调用，需保证单线程环境或同步机制。
     pub fn uvm_init(&mut self, code: &[u8]) {
-        if code.len() >= PGSIZE {
+        if code.len() >= PAGE_SIZE {
             panic!("initcode more than a page");
         }
  
         let mem = unsafe { RawSinglePage::new_zeroed() as *mut u8 };
         self.map_pages(
             VirtAddr::from(USERTEXT),
-            PGSIZE,
+            PAGE_SIZE,
             PhysAddr::try_from(mem as usize).unwrap(),
             PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U)
             .expect("map_page error");
@@ -546,7 +546,7 @@ impl PageTable {
         }
 
         let old_size = pg_round_up(old_size);
-        for cur_size in (old_size..new_size).step_by(PGSIZE) {
+        for cur_size in (old_size..new_size).step_by(PAGE_SIZE) {
             match unsafe { RawSinglePage::try_new_zeroed() } {
                 Err(_) => {
                     self.uvm_dealloc(cur_size, old_size);
@@ -555,7 +555,7 @@ impl PageTable {
                 Ok(mem) => {
                     match self.map_pages(
                         unsafe { VirtAddr::from_raw(cur_size) },
-                        PGSIZE, 
+                        PAGE_SIZE, 
                         unsafe { PhysAddr::from_raw(mem as usize) }, 
                         PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U
                     ) {
@@ -607,7 +607,7 @@ impl PageTable {
         let old_size_aligned = pg_round_up(old_size);
         let new_size_aligned = pg_round_up(new_size);
         if new_size_aligned < old_size_aligned {
-            let count = (old_size_aligned - new_size_aligned) / PGSIZE;
+            let count = (old_size_aligned - new_size_aligned) / PAGE_SIZE;
             self.uvm_unmap(new_size_aligned, count, true);
         }
 
@@ -638,11 +638,11 @@ impl PageTable {
     /// - 解除映射和释放操作需在单线程或同步环境下执行，避免竞态条件。  
     /// - 解除映射后页表项会清零，防止悬挂指针访问。
     pub fn uvm_unmap(&mut self, va: usize, count: usize, freeing: bool) {
-        if va % PGSIZE != 0 {
+        if va % PAGE_SIZE != 0 {
             panic!("va not page aligned");
         }
 
-        for ca in (va..(va+PGSIZE*count)).step_by(PGSIZE) {
+        for ca in (va..(va+PAGE_SIZE*count)).step_by(PAGE_SIZE) {
             let pte = self.walk_mut(unsafe {VirtAddr::from_raw(ca)})
                                         .expect("unable to find va available");
             if !pte.is_valid() {
@@ -707,20 +707,20 @@ impl PageTable {
     /// - 回滚机制确保部分失败时释放已分配内存，避免泄漏。  
     /// - 函数假设调用时页表状态一致，且无并发访问，调用者需保证同步。
     pub fn uvm_copy(&mut self, child_pgt: &mut Self, size: usize) -> Result<(), ()> {
-        for i in (0..size).step_by(PGSIZE) {
+        for i in (0..size).step_by(PAGE_SIZE) {
             let va = unsafe { VirtAddr::from_raw(i) };
             let pte = self.walk(va).expect("pte not exist");
             let mem = unsafe { pte.try_clone() };
             if let Ok(mem) = mem {
                 let perm = pte.read_perm();
-                if child_pgt.map_pages(va, PGSIZE,
+                if child_pgt.map_pages(va, PAGE_SIZE,
                     unsafe { PhysAddr::from_raw(mem as usize) }, perm).is_ok()
                 {
                     continue
                 }
                 unsafe { RawSinglePage::from_raw_and_drop(mem); }
             }
-            child_pgt.uvm_unmap(0, i/PGSIZE, true);
+            child_pgt.uvm_unmap(0, i/PAGE_SIZE, true);
             return Err(())
         }
         Ok(())
@@ -767,7 +767,7 @@ impl PageTable {
             let mut va_ptr = va.as_ptr();
             
             // iterate througn each u8 in a page
-            let mut count = min(PGSIZE - distance, dst.len() - i);
+            let mut count = min(PAGE_SIZE - distance, dst.len() - i);
             while count > 0 {
                 unsafe {
                     dst[i] = ptr::read(pa_ptr);
@@ -832,7 +832,7 @@ impl PageTable {
                 }
             }
             let off = dst - va.as_usize();
-            let off_from_end = PGSIZE - off;
+            let off_from_end = PAGE_SIZE - off;
             let off = off as isize;
             let dst_ptr = unsafe { pa.as_mut_ptr().offset(off) };
             if off_from_end > count {
@@ -900,7 +900,7 @@ impl PageTable {
                 }
             }
             let off = src - va.as_usize();
-            let off_from_end = PGSIZE - off;
+            let off_from_end = PAGE_SIZE - off;
             let off = off as isize;
             let src_ptr = unsafe { pa.as_ptr().offset(off) };
             if off_from_end > count {
@@ -943,5 +943,5 @@ impl Drop for PageTable {
 
 /// get the trapframe ptr in user space
 fn trapframe_from_pid(pid: usize) -> ConstAddr {
-    TRAPFRAME.const_sub(pid * PGSIZE)
+    TRAPFRAME.const_sub(pid * PAGE_SIZE)
 }
