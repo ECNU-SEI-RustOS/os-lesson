@@ -266,7 +266,7 @@ fn load_seg(pgt: &mut PageTable, va: usize, idata: &mut SleepLockGuard<'_, Inode
 
     for i in (0..size).step_by(PAGE_SIZE) {
         let pa: usize;
-        match pgt.walk_addr_mut(va) {
+        match pgt.find_pa_mut(va) {
             Ok(phys_addr) => pa = phys_addr.into_raw(),
             Err(s) => panic!("va={} should already be mapped, {}", va.into_raw(), s),
         }

@@ -172,7 +172,7 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
 /// - panic 会导致内核异常中断，应在调用前确保虚拟地址安全。
 pub unsafe fn kvm_pa(va: VirtAddr) -> u64 {
     let off: u64 = (va.as_usize() % PAGE_SIZE) as u64;
-    match KERNEL_PAGE_TABLE.walk(va) {
+    match KERNEL_PAGE_TABLE.find_pte(va) {
         Some(pte) => {
             if !pte.is_valid() {
                 panic!("kvm_pa: va={:?} mapped pa not valid", va);

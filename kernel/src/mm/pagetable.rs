@@ -242,7 +242,7 @@ impl PageTable {
         last.pg_round_up();
 
         while va != last {
-            match self.walk_alloc(va) {
+            match self.find_pte_create(va) {
                 Some(pte) => {
                     if pte.is_valid() {
                         println!(
@@ -290,60 +290,60 @@ impl PageTable {
     /// - 分配的页表页必须正确释放，否则会导致内存泄漏。  
     /// - 修改页表结构必须保证单线程或同步，避免并发写入冲突。  
     /// - 返回的可变引用指向底层内存，调用者应确保使用时内存有效且无数据竞争。
-    fn walk_alloc(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
-        let mut pgt = self as *mut PageTable;
+    fn find_pte_create(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
+        let mut pagetable = self as *mut PageTable;
         for level in (1..=2).rev() {
-            let pte = unsafe { &mut pgt.as_mut().unwrap().data[va.page_num(level)] };
+            let pte = unsafe { &mut pagetable.as_mut().unwrap().data[va.page_num(level)] };
 
             if pte.is_valid() {
-                pgt = pte.as_page_table();
+                pagetable = pte.as_page_table();
             } else {
                 let zerod_pgt = unsafe { Box::<Self>::try_new_zeroed().ok()?.assume_init() };
-                pgt = Box::into_raw(zerod_pgt);
-                pte.write(PhysAddr::try_from(pgt as usize).unwrap());
+                pagetable = Box::into_raw(zerod_pgt);
+                pte.write(PhysAddr::try_from(pagetable as usize).unwrap());
             }
         }
-        unsafe { Some(&mut pgt.as_mut().unwrap().data[va.page_num(0)]) }
+        unsafe { Some(&mut pagetable.as_mut().unwrap().data[va.page_num(0)]) }
     }
 
     /// 与 [walk_alloc] 功能相同，
     /// 但如果页表不存在时不会分配新的页表。
-    fn walk_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
-        let mut pgt = self as *mut PageTable;
+    fn find_pte_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
+        let mut pagetable = self as *mut PageTable;
         for level in (1..=2).rev() {
-            let pte = unsafe { &mut pgt.as_mut().unwrap().data[va.page_num(level)] };
+            let pte = unsafe { &mut pagetable.as_mut().unwrap().data[va.page_num(level)] };
 
             if pte.is_valid() {
-                pgt = pte.as_page_table();
+                pagetable = pte.as_page_table();
             } else {
                 return None
             }
         }
-        unsafe { Some(&mut pgt.as_mut().unwrap().data[va.page_num(0)]) }
+        unsafe { Some(&mut pagetable.as_mut().unwrap().data[va.page_num(0)]) }
     }
 
     /// 与 [walk_mut] 功能相同，
     /// 但返回的是不可变引用（非可变的页表项引用）。
-    pub fn walk(&self, va: VirtAddr) -> Option<&PageTableEntry> {
-        let mut pgt = self as *const PageTable;
+    pub fn find_pte(&self, va: VirtAddr) -> Option<&PageTableEntry> {
+        let mut pagetable = self as *const PageTable;
         for level in (1..=2).rev() {
-            let pte = unsafe { &pgt.as_ref().unwrap().data[va.page_num(level)] };
+            let pte = unsafe { &pagetable.as_ref().unwrap().data[va.page_num(level)] };
 
             if pte.is_valid() {
-                pgt = pte.as_page_table();
+                pagetable = pte.as_page_table();
             } else {
                 return None
             }
         }
-        unsafe { Some(&pgt.as_ref().unwrap().data[va.page_num(0)]) }
+        unsafe { Some(&pagetable.as_ref().unwrap().data[va.page_num(0)]) }
     }
 
     /// 与 [walk_addr] 功能相同，
     /// 但返回的物理地址指向的数据可以被修改。
-    pub fn walk_addr_mut(&mut self, va: VirtAddr)
+    pub fn find_pa_mut(&mut self, va: VirtAddr)
         -> Result<PhysAddr, &'static str>
     {
-        match self.walk_mut(va) {
+        match self.find_pte_mut(va) {
             Some(pte) => {
                 if !pte.is_valid() {
                     Err("pte not valid")
@@ -381,10 +381,10 @@ impl PageTable {
     /// - 函数为安全接口，不涉及 `unsafe` 操作。  
     /// - 调用者需保证 `va` 是合法的虚拟地址，避免频繁错误调用。  
     /// - 函数不修改页表，适合查询用途，线程安全。
-    pub fn walk_addr(&self, va: VirtAddr)
+    pub fn find_pa(&self, va: VirtAddr)
         -> Result<PhysAddr, &'static str>
     {
-        match self.walk(va) {
+        match self.find_pte(va) {
             Some(pte) => {
                 if !pte.is_valid() {
                     Err("pte not valid")
@@ -643,7 +643,7 @@ impl PageTable {
         }
 
         for ca in (va..(va+PAGE_SIZE*count)).step_by(PAGE_SIZE) {
-            let pte = self.walk_mut(unsafe {VirtAddr::from_raw(ca)})
+            let pte = self.find_pte_mut(unsafe {VirtAddr::from_raw(ca)})
                                         .expect("unable to find va available");
             if !pte.is_valid() {
                 panic!("this pte is not valid");
@@ -678,7 +678,7 @@ impl PageTable {
     /// - 函数修改页表项权限，调用时需确保虚拟地址合法且页表状态一致。  
     /// - 该操作影响用户态访问权限，错误使用可能导致用户程序异常或安全问题。
     pub fn uvm_clear(&mut self, va: usize) {
-        let pte = self.walk_mut(VirtAddr::try_from(va).unwrap())
+        let pte = self.find_pte_mut(VirtAddr::try_from(va).unwrap())
                                                 .expect("cannot find available pte");
         pte.clear_user();
     }
@@ -709,7 +709,7 @@ impl PageTable {
     pub fn uvm_copy(&mut self, child_pgt: &mut Self, size: usize) -> Result<(), ()> {
         for i in (0..size).step_by(PAGE_SIZE) {
             let va = unsafe { VirtAddr::from_raw(i) };
-            let pte = self.walk(va).expect("pte not exist");
+            let pte = self.find_pte(va).expect("pte not exist");
             let mem = unsafe { pte.try_clone() };
             if let Ok(mem) = mem {
                 let perm = pte.read_perm();
@@ -760,7 +760,7 @@ impl PageTable {
             base.pg_round_down();
             let distance = (va - base).as_usize();
             let mut pa_ptr = unsafe {
-                self.walk_addr(base)?
+                self.find_pa(base)?
                     .as_ptr()
                     .offset(distance as isize)
             };
@@ -823,7 +823,7 @@ impl PageTable {
         va.pg_round_down();
         loop {
             let mut pa;
-            match self.walk_addr_mut(va) {
+            match self.find_pa_mut(va) {
                 Ok(phys_addr) => pa = phys_addr,
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
@@ -879,7 +879,7 @@ impl PageTable {
         va.pg_round_down();
 
         if count == 0 {
-            match self.walk_addr(va) {
+            match self.find_pa(va) {
                 Ok(_) => return Ok(()),
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
@@ -891,7 +891,7 @@ impl PageTable {
 
         loop {
             let pa;
-            match self.walk_addr(va) {
+            match self.find_pa(va) {
                 Ok(phys_addr) => pa = phys_addr,
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
