@@ -17,6 +17,7 @@ lto = "off"
 bit_field = "=0.10.0"
 bitflags = "=1.2.1"
 array-macro = "=2.0.0"
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 
 [features]
 unit_test = []
