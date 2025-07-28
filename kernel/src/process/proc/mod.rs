@@ -272,7 +272,7 @@ impl ProcData {
     /// - 该函数包含不安全代码，依赖于 `tf` 指针的有效性和唯一所有权。
     /// - 调用者必须确保在进程数据被其他代码访问之前调用此函数，避免资源竞争。
     /// - 释放页表时必须保证当前进程内存映射处于可安全释放状态，避免悬挂指针。
-    pub fn cleanup(&mut self) {
+    pub fn cleanup(&mut self, pid: usize) {
         self.name[0] = 0;
         let tf = self.tf;
         self.tf = ptr::null_mut();
@@ -281,7 +281,7 @@ impl ProcData {
         }
         let pgt = self.pagetable.take();
         if let Some(mut pgt) = pgt {
-            pgt.dealloc_proc_pagetable(self.sz);
+            pgt.dealloc_proc_pagetable(self.sz, pid);
         }
         self.sz = 0;
     }
@@ -668,6 +668,7 @@ impl Proc {
         let pdata = self.data.get_mut();
         let child = unsafe { PROC_MANAGER.alloc_proc().ok_or(())? };
         let mut cexcl = child.excl.lock();
+        let cpid = cexcl.pid;
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
 
         // clone memory
@@ -676,7 +677,7 @@ impl Proc {
         if pdata.pagetable.as_mut().unwrap().uvm_copy(cpgt, size).is_err() {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
-            cdata.cleanup();
+            cdata.cleanup(cpid);
             cexcl.cleanup();
             return Err(())
         }

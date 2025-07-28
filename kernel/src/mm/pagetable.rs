@@ -3,8 +3,8 @@ use array_macro::array;
 use alloc::boxed::Box;
 use core::{cmp::min, convert::TryFrom};
 use core::ptr;
-
-use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME};
+use crate::consts::ConstAddr;
+use crate::consts::{PGSHIFT, PGSIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME, };
 use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
 
 bitflags! {
@@ -422,7 +422,7 @@ impl PageTable {
     /// - 调用者必须保证 `trapframe` 物理地址有效且正确。  
     /// - 返回的页表应妥善管理，避免内存泄漏或数据竞争。  
     /// - 适合在进程创建时调用，且需保证调用时无并发冲突。
-    pub fn alloc_proc_pagetable(trapframe: usize) -> Option<Box<Self>> {
+    pub fn alloc_proc_pagetable(trapframe: usize, pid: usize) -> Option<Box<Self>> {
         extern "C" {
             fn trampoline();
         }
@@ -438,7 +438,7 @@ impl PageTable {
             .ok()?;
         pagetable
             .map_pages(
-                VirtAddr::from(TRAPFRAME),
+                VirtAddr::from(trapframe_from_pid(pid)),
                 PGSIZE,
                 PhysAddr::try_from(trapframe).unwrap(),
                 PteFlag::R | PteFlag::W,
@@ -469,9 +469,9 @@ impl PageTable {
     /// - 调用时需保证页表和映射状态一致，避免并发访问冲突。  
     /// - 释放物理内存和虚拟映射属于危险操作，调用者需确保调用时无其他线程访问相关内存。  
     /// - 该函数安全接口，内部细节依赖 `uvm_unmap` 的正确实现。
-    pub fn dealloc_proc_pagetable(&mut self, proc_size: usize) {
+    pub fn dealloc_proc_pagetable(&mut self, proc_size: usize, pid: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
-        self.uvm_unmap(TRAPFRAME.into(), 1, false);
+        self.uvm_unmap(trapframe_from_pid(pid).into(), 1, false);
         // free physical memory
         if proc_size > 0 {
             self.uvm_unmap(0, pg_round_up(proc_size)/PGSIZE, true);
@@ -939,4 +939,9 @@ impl Drop for PageTable {
     fn drop(&mut self) {
         self.data.iter_mut().for_each(|pte| pte.free());
     }
+}
+
+/// get the trapframe ptr in user space
+fn trapframe_from_pid(pid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(pid * PGSIZE)
 }

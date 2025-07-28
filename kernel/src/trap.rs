@@ -3,7 +3,7 @@
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, process::{Proc, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
+use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ, PGSIZE, ConstAddr}, process::{Proc, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -93,9 +93,10 @@ pub unsafe fn user_trap_ret() -> ! {
     stvec::write(TRAMPOLINE.into());
 
     // let the current process prepare for the sret
-    let satp = {
+    let (satp,pid) = {
         let pd = CPU_MANAGER.my_proc().data.get_mut();
-        pd.user_ret_prepare()
+        let pid = CPU_MANAGER.my_proc().excl.lock().pid;
+        (pd.user_ret_prepare(), pid)
     };
 
     // call userret with virtual address
@@ -106,7 +107,7 @@ pub unsafe fn user_trap_ret() -> ! {
     let distance = userret as usize - trampoline as usize;
     let userret_virt: extern "C" fn(usize, usize) -> ! =
         core::mem::transmute(Into::<usize>::into(TRAMPOLINE) + distance);
-    userret_virt(TRAPFRAME.into(), satp);
+    userret_virt(trapframe_from_pid(pid).into(), satp);
 }
 
 /// Used to handle kernel space's trap
@@ -202,4 +203,9 @@ pub fn clock_sleep(p: &Proc, count: usize) -> Result<(), ()> {
 /// Read the current ticks.
 pub fn clock_read() -> usize {
     TICKS.lock().0
+}
+
+/// get the trapframe ptr in user space
+fn trapframe_from_pid(pid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(pid * PGSIZE)
 }

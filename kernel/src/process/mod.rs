@@ -211,7 +211,7 @@ impl ProcManager {
                     pd.tf = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
                     debug_assert!(pd.pagetable.is_none());
-                    match PageTable::alloc_proc_pagetable(pd.tf as usize) {
+                    match PageTable::alloc_proc_pagetable(pd.tf as usize, new_pid) {
                         Some(pgt) => pd.pagetable = Some(pgt),
                         None => {
                             unsafe {
@@ -540,7 +540,7 @@ impl ProcManager {
                 parent_map[i].take();
                 self.table[i].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[i].data.get().as_mut().unwrap() };
-                child_data.cleanup();
+                child_data.cleanup(child_pid);
                 child_excl.cleanup();
                 return Ok(child_pid);
             }
@@ -605,7 +605,7 @@ impl ProcManager {
                 parent_map[child_index].take();
                 self.table[child_index].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[child_index].data.get().as_mut().unwrap() };
-                child_data.cleanup();
+                child_data.cleanup(child_pid);
                 child_excl.cleanup();
                 drop(child_excl);
                 return Ok(child_pid);
