@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use array_macro::array;
 
 use alloc::boxed::Box;
@@ -7,6 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
+use crate::process::proc::task::Task;
 use crate::process::task_manager;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, RawPage, RawSinglePage};
@@ -105,6 +107,8 @@ pub struct ProcData {
     pub pagetable: Option<Box<PageTable>>,
     /// 进程当前工作目录的 inode。
     pub cwd: Option<Inode>,
+    /// 当前进程中的线程
+    pub tasks: Vec<Option<Arc<Task>>>
 }
 
 
@@ -119,9 +123,13 @@ impl ProcData {
             trapframe: ptr::null_mut(),
             pagetable: None,
             cwd: None,
+            tasks: Vec::new()
         }
     }
-
+    /// 获取进程中的线程数量
+    pub fn thread_count(&self) -> usize {
+        self.tasks.len()
+    }
     /// Set kstack
     pub fn set_kstack(&mut self, kstack: usize) {
         self.kstack = kstack;
