@@ -15,7 +15,7 @@ use core::sync::atomic::{fence, Ordering};
 use core::ptr;
 use core::convert::TryInto;
 
-use crate::consts::{PGSHIFT, PGSIZE, VIRTIO0, fs::BSIZE};
+use crate::consts::{PGSHIFT, PAGE_SIZE, VIRTIO0, fs::BSIZE};
 use crate::fs::Buf;
 use crate::spinlock::SpinLock;
 use crate::process::{PROC_MANAGER, CPU_MANAGER};
@@ -58,9 +58,9 @@ impl Disk {
     /// Init the Disk.
     /// Only called once when the kernel boots.
     pub unsafe fn init(&mut self) {
-        debug_assert_eq!((&self.desc as *const _ as usize) % PGSIZE, 0);
-        debug_assert_eq!((&self.used as *const _ as usize) % PGSIZE, 0);
-        debug_assert_eq!((&self.free as *const _ as usize) % PGSIZE, 0);
+        debug_assert_eq!((&self.desc as *const _ as usize) % PAGE_SIZE, 0);
+        debug_assert_eq!((&self.used as *const _ as usize) % PAGE_SIZE, 0);
+        debug_assert_eq!((&self.free as *const _ as usize) % PAGE_SIZE, 0);
     
         if read(VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976
             || read(VIRTIO_MMIO_VERSION) != 1
@@ -99,7 +99,7 @@ impl Disk {
         status |= VIRTIO_CONFIG_S_DRIVER_OK;
         write(VIRTIO_MMIO_STATUS, status);
     
-        write(VIRTIO_MMIO_GUEST_PAGE_SIZE, PGSIZE as u32);
+        write(VIRTIO_MMIO_GUEST_PAGE_SIZE, PAGE_SIZE as u32);
     
         // initialize queue 0
         write(VIRTIO_MMIO_QUEUE_SEL, 0);

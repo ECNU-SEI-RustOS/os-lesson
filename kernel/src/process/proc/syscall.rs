@@ -13,7 +13,7 @@ use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
 use crate::trap;
 
-use super::{Proc, elf};
+use super::{Process, elf};
 
 pub type SysResult = Result<usize, ()>;
 
@@ -44,7 +44,7 @@ pub trait Syscall {
     fn sys_test(&mut self) -> SysResult;
 }
 
-impl Syscall for Proc {
+impl Syscall for Process {
     fn sys_test(&mut self) -> SysResult{
         kinfo!("{} {} ", self.arg_raw(0),self.arg_raw(1));
         Result::Ok(1)

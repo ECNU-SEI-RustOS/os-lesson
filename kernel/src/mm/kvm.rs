@@ -4,7 +4,7 @@ use core::mem;
 
 use crate::consts::{
     CLINT, CLINT_MAP_SIZE, KERNBASE, PHYSTOP, PLIC, PLIC_MAP_SIZE, UART0, UART0_MAP_SIZE, VIRTIO0,
-    VIRTIO0_MAP_SIZE, TRAMPOLINE, PGSIZE
+    VIRTIO0_MAP_SIZE, TRAMPOLINE, PAGE_SIZE
 };
 use crate::register::satp;
 use super::{Addr, PageTable, PhysAddr, PteFlag, VirtAddr, RawSinglePage, RawDoublePage, RawQuadPage};
@@ -57,14 +57,14 @@ pub unsafe fn kvm_init_hart() {
 /// - 适用于内核启动初始化阶段，且不应在多核并发环境下随意调用。
 pub unsafe fn kvm_init() {
     // check if RawPages and PageTable have the same mem layout
-    debug_assert_eq!(mem::size_of::<RawSinglePage>(), PGSIZE);
-    debug_assert_eq!(mem::align_of::<RawSinglePage>(), PGSIZE);
+    debug_assert_eq!(mem::size_of::<RawSinglePage>(), PAGE_SIZE);
+    debug_assert_eq!(mem::align_of::<RawSinglePage>(), PAGE_SIZE);
     debug_assert_eq!(mem::size_of::<RawSinglePage>(), mem::size_of::<PageTable>());
     debug_assert_eq!(mem::align_of::<RawSinglePage>(), mem::align_of::<PageTable>());
-    debug_assert_eq!(mem::size_of::<RawDoublePage>(), PGSIZE*2);
-    debug_assert_eq!(mem::align_of::<RawDoublePage>(), PGSIZE);
-    debug_assert_eq!(mem::size_of::<RawQuadPage>(), PGSIZE*4);
-    debug_assert_eq!(mem::align_of::<RawQuadPage>(), PGSIZE);
+    debug_assert_eq!(mem::size_of::<RawDoublePage>(), PAGE_SIZE*2);
+    debug_assert_eq!(mem::align_of::<RawDoublePage>(), PAGE_SIZE);
+    debug_assert_eq!(mem::size_of::<RawQuadPage>(), PAGE_SIZE*4);
+    debug_assert_eq!(mem::align_of::<RawQuadPage>(), PAGE_SIZE);
 
     // uart registers
     kvm_map(
@@ -129,7 +129,7 @@ pub unsafe fn kvm_init() {
     kvm_map(
         VirtAddr::from(TRAMPOLINE),
         PhysAddr::try_from(trampoline as usize).unwrap(),
-        PGSIZE,
+        PAGE_SIZE,
         PteFlag::R | PteFlag::X
     );
 }
@@ -171,7 +171,7 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
 /// - 直接访问全局可变页表，可能导致数据竞争或非法访问，需在合适的环境下调用。  
 /// - panic 会导致内核异常中断，应在调用前确保虚拟地址安全。
 pub unsafe fn kvm_pa(va: VirtAddr) -> u64 {
-    let off: u64 = (va.as_usize() % PGSIZE) as u64;
+    let off: u64 = (va.as_usize() % PAGE_SIZE) as u64;
     match KERNEL_PAGE_TABLE.walk(va) {
         Some(pte) => {
             if !pte.is_valid() {

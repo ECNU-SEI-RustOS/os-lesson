@@ -9,7 +9,7 @@ use core::ptr::{self};
 use core::mem::{MaybeUninit, size_of};
 use core::cmp;
 
-use crate::consts::{PGSIZE, LEAF_SIZE, PHYSTOP};
+use crate::consts::{KERNEL_HEAP_END, LEAF_SIZE, PAGE_SIZE, PHYSTOP};
 use crate::spinlock::SpinLock;
 use super::list::List;
 
@@ -83,8 +83,8 @@ impl KernelHeap {
             fn end();
         }
         let end = end as usize;
-        println!("KernelHeap: available physical memory [{:#x}, {:#x})", end, usize::from(PHYSTOP));
-        self.init(end, usize::from(PHYSTOP));
+        println!("KernelHeap: available physical memory [{:#x}, {:#x})", end, usize::from(KERNEL_HEAP_END));
+        self.init(end, usize::from(KERNEL_HEAP_END));
         println!("KernelHeap: init memory done");
     }
 
@@ -236,9 +236,9 @@ impl BuddySystem {
 
         // make sure start and end are both page aligned
         // and record the heap memory range: [self.base, self.end)
-        let mut cur: usize = round_up(start, cmp::max(LEAF_SIZE, PGSIZE));
+        let mut cur: usize = round_up(start, cmp::max(LEAF_SIZE, PAGE_SIZE));
         self.base = cur;
-        self.actual_end = round_down(end, cmp::max(LEAF_SIZE, PGSIZE));
+        self.actual_end = round_down(end, cmp::max(LEAF_SIZE, PAGE_SIZE));
 
         // compute the max pow of 2 smaller than size of [self.base, self.actual_end)
         self.nsizes = log2((self.actual_end-cur)/LEAF_SIZE) + 1;
@@ -339,9 +339,9 @@ impl BuddySystem {
         }
 
         // only guarantee the alignment not bigger than page size
-        if layout.align() > PGSIZE {
+        if layout.align() > PAGE_SIZE {
             panic!("  buddy system: request layout alignment({}) bigger than PGSIZE({})",
-                layout.align(), PGSIZE);
+                layout.align(), PAGE_SIZE);
         }
         // note: the size of a value is always a multiple of its alignment
         // now we only have to consider the size

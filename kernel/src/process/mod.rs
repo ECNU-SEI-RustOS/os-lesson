@@ -5,7 +5,7 @@ use core::mem;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::consts::{fs::ROOTDEV, NPROC, PGSIZE, TRAMPOLINE};
+use crate::consts::{fs::ROOTDEV, NPROC, PAGE_SIZE, TRAMPOLINE};
 use crate::fs;
 use crate::mm::{
     kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
@@ -15,7 +15,7 @@ use crate::trap::user_trap_ret;
 
 pub use cpu::{pop_off, push_off};
 pub use cpu::{CpuManager, CPU_MANAGER};
-pub use proc::Proc;
+pub use proc::Process;
 
 mod context;
 mod cpu;
@@ -64,7 +64,7 @@ pub static mut PROC_MANAGER: ProcManager = ProcManager::new();
 /// 但访问整个进程表本身未加锁，使用时需注意并发安全。
 pub struct ProcManager {
     /// 进程表，存放系统中所有的进程结构体，数量固定为 `NPROC`。
-    table: [Proc; NPROC],
+    table: [Process; NPROC],
 
     /// 进程父子关系映射表，索引为子进程，值为对应父进程的索引。
     /// 受自旋锁保护以保证多线程环境下的安全访问。
@@ -80,7 +80,7 @@ pub struct ProcManager {
 impl ProcManager {
     const fn new() -> Self {
         Self {
-            table: array![i => Proc::new(i); NPROC],
+            table: array![i => Process::new(i); NPROC],
             parents: SpinLock::new(array![_ => None; NPROC], "proc parents"),
             init_proc: 0,
             pid: SpinLock::new(0, "pid"),
@@ -127,7 +127,7 @@ impl ProcManager {
             kvm_map(
                 VirtAddr::try_from(va).unwrap(),
                 PhysAddr::try_from(pa).unwrap(),
-                PGSIZE * 4,
+                PAGE_SIZE * 4,
                 PteFlag::R | PteFlag::W,
             );
             p.data.get_mut().set_kstack(va);
@@ -196,7 +196,7 @@ impl ProcManager {
     ///
     /// - 分配陷阱帧时使用了 `unsafe`，调用 `RawSinglePage::try_new_zeroed()`，
     ///   需要保证底层内存分配正确且有效。
-    fn alloc_proc(&mut self) -> Option<&mut Proc> {
+    fn alloc_proc(&mut self) -> Option<&mut Process> {
         let new_pid = self.alloc_pid();
 
         for p in self.table.iter_mut() {
@@ -208,14 +208,14 @@ impl ProcManager {
                     let pd = p.data.get_mut();
 
                     // alloc trapframe
-                    pd.tf = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    pd.trapframe = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
                     debug_assert!(pd.pagetable.is_none());
-                    match PageTable::alloc_proc_pagetable(pd.tf as usize, new_pid) {
+                    match PageTable::alloc_proc_pagetable(pd.trapframe as usize, new_pid) {
                         Some(pgt) => pd.pagetable = Some(pgt),
                         None => {
                             unsafe {
-                                RawSinglePage::from_raw_and_drop(pd.tf as *mut u8);
+                                RawSinglePage::from_raw_and_drop(pd.trapframe as *mut u8);
                             }
                             return None;
                         }
@@ -259,7 +259,7 @@ impl ProcManager {
     ///
     /// - 通过持有进程的 `excl` 自旋锁保证状态修改的原子性，避免竞态条件。
     /// - 返回时释放了锁，调用者需确保使用该进程指针时的并发安全。
-    fn alloc_runnable(&mut self) -> Option<&mut Proc> {
+    fn alloc_runnable(&mut self) -> Option<&mut Process> {
         for p in self.table.iter_mut() {
             let mut guard = p.excl.lock();
             match guard.state {
@@ -313,7 +313,7 @@ impl ProcManager {
     }
 
     /// 检查给定的进程是否是init
-    fn is_init_proc(&self, p: &Proc) -> bool {
+    fn is_init_proc(&self, p: &Process) -> bool {
         ptr::eq(&self.table[0], p)
     }
 
@@ -423,13 +423,13 @@ impl ProcManager {
     ///   通过锁保护防止数据竞态。
     /// - 调用调度器切换上下文时，
     ///   确保当前 CPU 和进程状态正确，避免死锁或调度异常。
-    fn exiting(&self, exit_pi: usize, exit_status: i32) {
-        if exit_pi == self.init_proc {
+    fn exiting(&self, exit_index: usize, exit_status: i32) {
+        if exit_index == self.init_proc {
             panic!("init process exiting");
         }
 
         unsafe {
-            self.table[exit_pi]
+            self.table[exit_index]
                 .data
                 .get()
                 .as_mut()
@@ -443,7 +443,7 @@ impl ProcManager {
         let mut have_child = false;
         for child in parent_map.iter_mut() {
             match child {
-                Some(parent) if *parent == exit_pi => {
+                Some(parent) if *parent == exit_index => {
                     *parent = self.init_proc;
                     have_child = true;
                 }
@@ -451,18 +451,18 @@ impl ProcManager {
             }
         }
         if have_child {
-            self.wakeup(&self.table[self.init_proc] as *const Proc as usize);
+            self.wakeup(&self.table[self.init_proc] as *const Process as usize);
         }
-        let exit_parenti = *parent_map[exit_pi].as_ref().unwrap();
-        self.wakeup(&self.table[exit_parenti] as *const Proc as usize);
+        let exit_parenti = *parent_map[exit_index].as_ref().unwrap();
+        self.wakeup(&self.table[exit_parenti] as *const Process as usize);
 
-        let mut exit_pexcl = self.table[exit_pi].excl.lock();
+        let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
         exit_pexcl.state = ProcState::ZOMBIE;
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
         unsafe {
-            let exit_ctx = self.table[exit_pi]
+            let exit_ctx = self.table[exit_index]
                 .data
                 .get()
                 .as_mut()
@@ -471,7 +471,7 @@ impl ProcManager {
             CPU_MANAGER.my_cpu_mut().sched(exit_pexcl, exit_ctx);
         }
 
-        unreachable!("exiting {}", exit_pi);
+        unreachable!("exiting {}", exit_index);
     }
 
     /// # 功能说明
@@ -510,8 +510,8 @@ impl ProcManager {
     ///   需保证唤醒机制和锁释放顺序正确避免死锁。
     fn waiting(&self, pi: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let p = unsafe { CPU_MANAGER.my_proc() };
-        let pdata = unsafe { p.data.get().as_mut().unwrap() };
+        let process = unsafe { CPU_MANAGER.my_proc() };
+        let pdata = unsafe { process.data.get().as_mut().unwrap() };
 
         loop {
             let mut have_child = false;
@@ -545,20 +545,20 @@ impl ProcManager {
                 return Ok(child_pid);
             }
 
-            if !have_child || p.killed.load(Ordering::Relaxed) {
+            if !have_child || process.killed.load(Ordering::Relaxed) {
                 return Err(());
             }
 
             // have children, but none of them exit
-            let channel = p as *const Proc as usize;
-            p.sleep(channel, parent_map);
+            let channel = process as *const Process as usize;
+            process.sleep(channel, parent_map);
             parent_map = self.parents.lock();
         }
     }
     fn waiting_pid(&self, current_pid: usize, child_pid: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let p = unsafe { CPU_MANAGER.my_proc() };
-        let pdata = unsafe { p.data.get().as_mut().unwrap() };
+        let process = unsafe { CPU_MANAGER.my_proc() };
+        let pdata = unsafe { process.data.get().as_mut().unwrap() };
         let mut child_index = 0usize;
         for i in 0..NPROC {
             if self.table[i].excl.lock().pid == child_pid  {
@@ -582,8 +582,8 @@ impl ProcManager {
             if child_excl.state != ProcState::ZOMBIE {
                 // have children, but none of them exit
                 drop(child_excl);
-                let channel = p as *const Proc as usize;
-                p.sleep(channel, parent_map);
+                let channel = process as *const Process as usize;
+                process.sleep(channel, parent_map);
                 parent_map = self.parents.lock();
             } else {
                 if addr != 0
@@ -598,7 +598,7 @@ impl ProcManager {
                     return Err(());
                 }
 
-                if p.killed.load(Ordering::Relaxed) {
+                if process.killed.load(Ordering::Relaxed) {
                     return Err(());
                 }
 
@@ -694,5 +694,5 @@ unsafe fn fork_ret() -> ! {
 /// - 返回 `usize` 类型的虚拟地址，表示对应进程内核栈的起始地址（栈顶地址）。
 #[inline]
 fn kstack(pos: usize) -> usize {
-    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * 5 * PGSIZE
+    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * 5 * PAGE_SIZE
 }

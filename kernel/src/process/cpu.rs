@@ -5,7 +5,7 @@ use core::ptr;
 use crate::register::{tp, sstatus};
 use crate::spinlock::SpinLockGuard;
 use crate::consts::NCPU;
-use super::{Context, PROC_MANAGER, Proc, ProcState, proc::ProcExcl};
+use super::{Context, PROC_MANAGER, Process, ProcState, proc::ProcExcl};
 
 /// 全局 CPU 管理器实例
 ///
@@ -86,15 +86,15 @@ impl CpuManager {
     ///   调用者必须保证当前 CPU 的 `proc` 指针有效且唯一持有，
     ///   否则可能导致数据竞争或未定义行为。
     /// - 由于返回了可变引用，必须确保调用者不会引入别名可变引用。
-    pub fn my_proc(&self) -> &mut Proc {
+    pub fn my_proc(&self) -> &mut Process {
         let p;
         push_off();
         unsafe {
             let c = self.my_cpu();
-            if c.proc.is_null() {
+            if c.process.is_null() {
                 panic!("my_proc(): no process running");
             }
-            p = &mut *c.proc;
+            p = &mut *c.process;
         }
         pop_off();
         p
@@ -151,17 +151,17 @@ impl CpuManager {
             // use ProcManager to find a runnable process
             match PROC_MANAGER.alloc_runnable() {
                 Some(p) => {
-                    c.proc = p as *mut _;
+                    c.process = p as *mut _;
                     let mut guard = p.excl.lock();
                     guard.state = ProcState::RUNNING;
 
                     switch(&mut c.scheduler as *mut Context,
                         p.data.get_mut().get_context());
                     
-                    if c.proc.is_null() {
+                    if c.process.is_null() {
                         panic!("context switch back with no process reference");
                     }
-                    c.proc = ptr::null_mut();
+                    c.process = ptr::null_mut();
                     drop(guard);
                 },
                 None => {},
@@ -181,7 +181,7 @@ impl CpuManager {
 pub struct Cpu {
     /// 当前在该 CPU 上运行的进程的裸指针。
     /// 如果没有运行进程，则为 null。
-    proc: *mut Proc,
+    process: *mut Process,
 
     /// 调度器上下文，用于保存调度器自身的寄存器状态，
     /// 在进程切换时作为切换目标上下文。
@@ -199,7 +199,7 @@ pub struct Cpu {
 impl Cpu {
     const fn new() -> Self {
         Self {
-            proc: ptr::null_mut(),
+            process: ptr::null_mut(),
             scheduler: Context::new(),
             noff: 0,
             intena: false,
@@ -297,13 +297,13 @@ impl Cpu {
     /// - 锁机制保证并发安全，避免进程状态被竞态修改。
     ///
     pub fn try_yield_proc(&mut self) {
-        if !self.proc.is_null() {
+        if !self.process.is_null() {
             let guard = unsafe {
-                self.proc.as_mut().unwrap().excl.lock()
+                self.process.as_mut().unwrap().excl.lock()
             };
             if guard.state == ProcState::RUNNING {
                 drop(guard);
-                unsafe { self.proc.as_mut().unwrap().yielding(); }
+                unsafe { self.process.as_mut().unwrap().yielding(); }
             } else {
                 drop(guard);
             }
