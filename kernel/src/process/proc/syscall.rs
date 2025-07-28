@@ -8,7 +8,8 @@ use core::fmt::Display;
 use core::mem;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
-use crate::process::PROC_MANAGER;
+use crate::process::{PROC_MANAGER};
+use crate::process::task_manager;
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
 use crate::trap;
@@ -210,6 +211,7 @@ impl Syscall for Process {
         if result.is_err() {
             syscall_warning(error);
         }
+        //manager.lock().add(self as *const Process);
         result
     }
 

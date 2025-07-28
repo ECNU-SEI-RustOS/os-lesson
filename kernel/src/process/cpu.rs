@@ -2,10 +2,11 @@ use array_macro::array;
 
 use core::ptr;
 
-use crate::register::{tp, sstatus};
-use crate::spinlock::SpinLockGuard;
+use super::{proc::ProcExcl, Context, ProcState, Process, PROC_MANAGER};
 use crate::consts::NCPU;
-use super::{Context, PROC_MANAGER, Process, ProcState, proc::ProcExcl};
+use crate::process::task_manager;
+use crate::register::{sstatus, tp};
+use crate::spinlock::SpinLockGuard;
 
 /// 全局 CPU 管理器实例
 ///
@@ -25,14 +26,14 @@ pub static mut CPU_MANAGER: CpuManager = CpuManager::new();
 ///
 /// `CpuManager` 通过固定大小数组 `table` 存储每个 CPU 对应的 `Cpu` 结构体，
 /// 用于跟踪每个 CPU 的运行状态、调度上下文以及当前运行的进程。
-/// 
+///
 /// 该结构是多核系统调度的核心组件，负责协调不同 CPU 之间的进程调度。
 /// 访问和修改时通常需要关闭中断或使用同步机制以避免竞态。
 ///
 pub struct CpuManager {
     /// 所有 CPU 核心状态的数组，长度为系统支持的最大 CPU 数量 `NCPU`。
     /// 每个元素对应一个 CPU 核心，包含该 CPU 的运行进程和调度上下文。
-    table: [Cpu; NCPU]
+    table: [Cpu; NCPU],
 }
 
 impl CpuManager {
@@ -87,17 +88,17 @@ impl CpuManager {
     ///   否则可能导致数据竞争或未定义行为。
     /// - 由于返回了可变引用，必须确保调用者不会引入别名可变引用。
     pub fn my_proc(&self) -> &mut Process {
-        let p;
+        let process;
         push_off();
         unsafe {
-            let c = self.my_cpu();
-            if c.process.is_null() {
+            let cpu = self.my_cpu();
+            if cpu.process.is_none() {
                 panic!("my_proc(): no process running");
             }
-            p = &mut *c.process;
+            process = cpu.process.unwrap();
         }
         pop_off();
-        p
+        unsafe { &mut *process }
     }
 
     /// # 功能说明
@@ -149,22 +150,27 @@ impl CpuManager {
             sstatus::intr_on();
 
             // use ProcManager to find a runnable process
-            match PROC_MANAGER.alloc_runnable() {
+            match {
+                let res = task_manager.lock().fetch();
+                res
+            } {
                 Some(process) => {
-                    cpu.process = process as *mut _;
-                    let mut guard = process.excl.lock();
+                    cpu.process = Some(process as _);
+                    let process = process as *mut Process;
+                    let task = &mut *process;
+                    let mut guard = task.excl.lock();
                     guard.state = ProcState::RUNNING;
+                    let old_context = &mut cpu.scheduler as *mut Context;
+                    let new_context = task.data.get_mut().get_context();
 
-                    switch(&mut cpu.scheduler as *mut Context,
-                        process.data.get_mut().get_context());
-                    
-                    if cpu.process.is_null() {
+                    switch(old_context, new_context);
+                    if cpu.process.is_none() {
                         panic!("context switch back with no process reference");
                     }
-                    cpu.process = ptr::null_mut();
+                    cpu.process = None;
                     drop(guard);
-                },
-                None => {},
+                }
+                None => {}
             }
         }
     }
@@ -181,7 +187,7 @@ impl CpuManager {
 pub struct Cpu {
     /// 当前在该 CPU 上运行的进程的裸指针。
     /// 如果没有运行进程，则为 null。
-    process: *mut Process,
+    process: Option<*mut Process>,
 
     /// 调度器上下文，用于保存调度器自身的寄存器状态，
     /// 在进程切换时作为切换目标上下文。
@@ -199,7 +205,7 @@ pub struct Cpu {
 impl Cpu {
     const fn new() -> Self {
         Self {
-            process: ptr::null_mut(),
+            process: None,
             scheduler: Context::new(),
             noff: 0,
             intena: false,
@@ -240,9 +246,11 @@ impl Cpu {
     /// - `swtch` 是外部汇编函数，需保证正确保存和恢复寄存器，
     ///   否则可能导致未定义行为。
     /// - 保证函数调用时符合锁和中断状态的前置条件，防止竞态和数据损坏。
-    pub unsafe fn sched<'a>(&mut self, guard: SpinLockGuard<'a, ProcExcl>, ctx: *mut Context)
-        -> SpinLockGuard<'a, ProcExcl>
-    {
+    pub unsafe fn sched<'a>(
+        &mut self,
+        guard: SpinLockGuard<'a, ProcExcl>,
+        ctx: *mut Context,
+    ) -> SpinLockGuard<'a, ProcExcl> {
         extern "C" {
             fn switch(old: *mut Context, new: *mut Context);
         }
@@ -297,13 +305,19 @@ impl Cpu {
     /// - 锁机制保证并发安全，避免进程状态被竞态修改。
     ///
     pub fn try_yield_proc(&mut self) {
-        if !self.process.is_null() {
+        if !self.process.is_none() {
+            let process;
             let guard = unsafe {
-                self.process.as_mut().unwrap().excl.lock()
+                process = &mut *self.process.unwrap();
+                process.excl.lock()
             };
             if guard.state == ProcState::RUNNING {
                 drop(guard);
-                unsafe { self.process.as_mut().unwrap().yielding(); }
+                unsafe {
+                    let process = &mut *self.process.unwrap();
+                    process.excl.lock();
+                    process.yielding();
+                }
             } else {
                 drop(guard);
             }

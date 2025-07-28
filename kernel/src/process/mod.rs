@@ -1,4 +1,5 @@
 use array_macro::array;
+use lazy_static::lazy_static;
 
 use core::convert::TryFrom;
 use core::mem;
@@ -78,8 +79,11 @@ pub struct ProcManager {
     /// 全局进程 ID 分配器，负责分配唯一的 PID，受自旋锁保护以保证并发安全。
     pid: SpinLock<usize>,
 
+}
+
+lazy_static!{
     /// 可运行进程FIFO队列
-    manager: SpinLock<ProcessFIFO>
+    pub static ref task_manager: SpinLock<ProcessFIFO> = SpinLock::new(ProcessFIFO::new(), "pid");
 }
 
 impl ProcManager {
@@ -89,7 +93,6 @@ impl ProcManager {
             parents: SpinLock::new(array![_ => None; NPROC], "proc parents"),
             init_proc: 0,
             pid: SpinLock::new(0, "pid"),
-            manager: SpinLock::new(ProcessFIFO::new(), "pid"),
         }
     }
 
@@ -312,6 +315,7 @@ impl ProcManager {
         process.user_init();
         let mut guard = process.excl.lock();
         guard.state = ProcState::RUNNABLE;
+        task_manager.lock().add(process as *const Process);
     }
 
     /// 检查给定的进程是否是init
@@ -352,6 +356,7 @@ impl ProcManager {
             let mut guard = process.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
+                task_manager.lock().add(process as *const Process);
             }
             drop(guard);
         }

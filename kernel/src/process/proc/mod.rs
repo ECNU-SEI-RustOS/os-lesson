@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
-
+use crate::process::task_manager;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, RawPage, RawSinglePage};
 use crate::register::{satp, sepc, sstatus};
@@ -568,6 +568,7 @@ impl Process {
         let mut guard = self.excl.lock();
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
+        task_manager.lock().add(self as *const Process);
         guard = unsafe { CPU_MANAGER.my_cpu_mut().sched(guard,
             self.data.get_mut().get_context()) };
         drop(guard);
@@ -707,7 +708,7 @@ impl Process {
         let mut cexcl = child.excl.lock();
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
-
+        task_manager.lock().add(child as *const Process);
         Ok(cpid)
     }
 }

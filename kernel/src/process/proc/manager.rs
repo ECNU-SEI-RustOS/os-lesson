@@ -2,11 +2,13 @@ use alloc::collections::VecDeque;
 use super::Process;
 
 pub struct ProcessFIFO {
-    current: Option<*mut Process>,
-    ready_queue: VecDeque<*mut Process>
+    current: Option<*const Process>,
+    ready_queue: VecDeque<*const Process>
 }
 
 unsafe impl Sync for ProcessFIFO {
+}
+unsafe impl Send for ProcessFIFO {
 }
 /// A simple FIFO scheduler.
 impl ProcessFIFO {
@@ -16,22 +18,10 @@ impl ProcessFIFO {
             ready_queue: VecDeque::new(),
         }
     }
-    pub fn add(&mut self, process: *mut Process) {
+    pub fn add(&mut self, process: *const Process) {
         self.ready_queue.push_back(process);
     }
-    pub fn fetch(&mut self) -> Option<*mut Process> {
-        let proc = self.ready_queue.pop_front();
-        self.current = proc.clone();
-        proc
-    }
-    pub fn remove(&mut self, process: *mut Process) {
-        if let Some((id, _)) = self
-            .ready_queue
-            .iter()
-            .enumerate()
-            .find(|(_, t)| **t as usize == process as usize)
-        {
-            self.ready_queue.remove(id);
-        }
+    pub fn fetch(&mut self) -> Option<*const Process> {
+        self.ready_queue.pop_front()
     }
 }
