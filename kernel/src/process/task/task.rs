@@ -1,5 +1,5 @@
 use core::cell::{Cell, UnsafeCell};
-use crate::consts::{KERNEL_STACK_SIZE, PAGE_SIZE, USER_STACK_SIZE, TRAMPOLINE};
+use crate::consts::{KERNEL_STACK_SIZE, PAGE_SIZE, USER_STACK_SIZE, TRAMPOLINE, ConstAddr, TRAPFRAME};
 use crate::mm::{PhysAddr, RawPage, RawQuadPage, RawSinglePage, VirtAddr};
 use crate::process::{fork_ret, kvm_map};
 use crate::process::proc::Process;
@@ -198,4 +198,8 @@ impl Drop for Task {
 #[inline]
 fn ustack_bottom_from_tid(ustack_base: usize, tid: usize) -> usize {
     ustack_base + tid * (PAGE_SIZE + USER_STACK_SIZE)
+}
+/// get the trapframe ptr in user space by tid
+fn trapframe_from_tid(tid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(tid * PAGE_SIZE)
 }

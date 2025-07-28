@@ -205,7 +205,7 @@ pub fn clock_read() -> usize {
     TICKS.lock().0
 }
 
-/// get the trapframe ptr in user space
+/// get the trapframe ptr in user space by pid
 fn trapframe_from_pid(pid: usize) -> ConstAddr {
     TRAPFRAME.const_sub(pid * PAGE_SIZE)
 }
