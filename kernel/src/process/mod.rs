@@ -119,7 +119,7 @@ impl ProcManager {
     ///   需要保证地址转换正确且符合内存管理单元的规范。
     /// - 此函数假设 `kvm_map` 成功完成映射，未做错误检查。
     pub unsafe fn proc_init(&mut self) {
-        for (pos, p) in self.table.iter_mut().enumerate() {
+        for (pos, process) in self.table.iter_mut().enumerate() {
             // Allocate a page for the process's kernel stack.
             // Map it high in memory, followed by an invalid
             // guard page.
@@ -131,7 +131,7 @@ impl ProcManager {
                 KERNEL_STACK_SIZE,
                 PteFlag::R | PteFlag::W,
             );
-            p.data.get_mut().set_kstack(va);
+            process.data.get_mut().set_kstack(va);
         }
     }
 
