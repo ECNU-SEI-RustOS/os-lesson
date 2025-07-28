@@ -1,5 +1,10 @@
 use alloc::vec::Vec;
 
+use lazy_static::*;
+use crate::spinlock::SpinLock;
+lazy_static!{
+    pub static ref TID_ALLOCATOR: SpinLock<RecycleAllocator> = SpinLock::new(RecycleAllocator::new(),"tid_allocator");
+}
 pub struct RecycleAllocator{
     current: usize,
     recycled: Vec<usize>

@@ -1,15 +1,11 @@
-use alloc::sync::Arc;
 use core::cell::{Cell, UnsafeCell};
-use crate::process::PageTable;
-use crate::consts::{KERNEL_STACK_SIZE, USER_STACK_SIZE};
+use crate::consts::{KERNEL_STACK_SIZE, PAGE_SIZE, USER_STACK_SIZE, TRAMPOLINE};
 use crate::mm::{PhysAddr, RawPage, RawQuadPage, RawSinglePage, VirtAddr};
 use crate::process::{fork_ret, kvm_map};
 use crate::process::proc::Process;
 use crate::process::trapframe::TrapFrame;
 use crate::process::Context;
-use crate::process::PteFlag;
-use crate::process::{PGSIZE, TID_ALLOCATOR, TRAMPOLINE};
-use crate::consts::TRAPFRAME;
+use super::tid::TID_ALLOCATOR;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TaskStatus {
@@ -25,7 +21,7 @@ pub enum TaskStatus {
 
 /// Return (bottom, top) of a kernel stack in kernel space.
 pub fn kernel_stack_position_by_tid(tid: usize) -> (usize, usize) {
-    let kstack_top: usize = Into::<usize>::into(TRAMPOLINE) - (tid + 1024 + 1) * 5 * PGSIZE;
+    let kstack_top: usize = Into::<usize>::into(TRAMPOLINE) - (tid + 1024 + 1) * KERNEL_STACK_SIZE;
     (kstack_top - KERNEL_STACK_SIZE, kstack_top)
 }
 
@@ -127,7 +123,7 @@ impl TaskControlInner {
 }
 impl Task {
     pub fn new(process: Option<*mut Process>, ustack_base: usize, alloc_user_res: bool) -> Self {
-        let tid = TID_ALLOCATOR.lock().alloc();
+        let tid = TID_ALLOCATOR.lock().tid_alloc();
         kinfo!("alloc tid:{}", tid);
         let res = TaskUserRes::new(process, tid, ustack_base, alloc_user_res);
         let kstack = unsafe { kstack_alloc(tid) };
@@ -194,12 +190,12 @@ impl Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        TID_ALLOCATOR.lock().dealloc(self.tid);
+        TID_ALLOCATOR.lock().tid_dealloc(self.tid);
         kinfo!("dealloc tid:{}", self.tid);
     }
 }
 
 #[inline]
 fn ustack_bottom_from_tid(ustack_base: usize, tid: usize) -> usize {
-    ustack_base + tid * (PGSIZE + USER_STACK_SIZE)
+    ustack_base + tid * (PAGE_SIZE + USER_STACK_SIZE)
 }
