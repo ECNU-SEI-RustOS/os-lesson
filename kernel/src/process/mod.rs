@@ -11,6 +11,7 @@ use crate::fs;
 use crate::mm::{
     kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
 };
+use crate::process::proc::pid::PID_ALLOCATOR;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
 
@@ -161,12 +162,8 @@ impl ProcManager {
     ///   保证多线程环境下的安全访问。
     /// - 调用此函数本身是安全的，无需额外 `unsafe` 块。
     fn alloc_pid(&self) -> usize {
-        let ret_pid: usize;
-        let mut pid = self.pid.lock();
-        ret_pid = *pid;
-        *pid += 1;
-        drop(pid);
-        ret_pid
+        let pid = PID_ALLOCATOR.lock().pid_alloc();
+        pid
     }
 
     /// # 功能说明
@@ -437,7 +434,7 @@ impl ProcManager {
                 .unwrap()
                 .close_files();
         }
-
+        let pid = self.table[exit_index].excl.lock().pid;
         let mut parent_map = self.parents.lock();
 
         // Set the children's parent to init process.
@@ -460,6 +457,7 @@ impl ProcManager {
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
         exit_pexcl.state = ProcState::ZOMBIE;
+        PID_ALLOCATOR.lock().pid_dealloc(pid);
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
         unsafe {
