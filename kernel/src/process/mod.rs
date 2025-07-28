@@ -14,7 +14,7 @@ use crate::mm::{
 use crate::process::proc::pid::PID_ALLOCATOR;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
-
+use crate::process::proc::manager::ProcessFIFO;
 pub use cpu::{pop_off, push_off};
 pub use cpu::{CpuManager, CPU_MANAGER};
 pub use proc::Process;
@@ -77,6 +77,9 @@ pub struct ProcManager {
 
     /// 全局进程 ID 分配器，负责分配唯一的 PID，受自旋锁保护以保证并发安全。
     pid: SpinLock<usize>,
+
+    /// 可运行进程FIFO队列
+    manager: SpinLock<ProcessFIFO>
 }
 
 impl ProcManager {
@@ -86,6 +89,7 @@ impl ProcManager {
             parents: SpinLock::new(array![_ => None; NPROC], "proc parents"),
             init_proc: 0,
             pid: SpinLock::new(0, "pid"),
+            manager: SpinLock::new(ProcessFIFO::new(), "pid"),
         }
     }
 

@@ -26,6 +26,7 @@ mod syscall;
 mod elf;
 mod task;
 pub mod pid;
+pub mod manager;
 
 /// 进程状态枚举类型，表示操作系统内核中进程的不同生命周期状态。
 ///
