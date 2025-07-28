@@ -12,11 +12,15 @@ pub const NTHREAD: usize = 2048;
 pub const NSMP: usize = 3;
 
 /// memory design
-pub const PGSIZE: usize = 4096;
+pub const PAGE_SIZE: usize = 0x1000;
 pub const PGSHIFT: usize = 12;
 pub const PGMASK: usize = 0x1FF;
 pub const PGMASKLEN: usize = 9;
+pub const PAGE_SIZE_BITS: usize = 0xc;
 
+// 内核栈大小
+pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE * 4;
+pub const USER_STACK_SIZE: usize = PAGE_SIZE * 4;
 /// for syscall
 /// maximum length of a file system path
 pub const MAXPATH: usize = 128;
