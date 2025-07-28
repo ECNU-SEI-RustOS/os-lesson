@@ -8,7 +8,7 @@ use crate::mm::{kvm_init, kvm_init_hart};
 use crate::plic;
 use crate::process::{PROC_MANAGER, CPU_MANAGER};
 use crate::trap::trap_init_hart;
-
+use crate::mm::page_allocator::init_page_allocator;
 /// 用于多核启动同步的全局原子布尔变量。
 ///
 /// `STARTED` 表示主核（cpuid == 0）是否完成了内核的全局初始化。
@@ -51,6 +51,7 @@ pub unsafe fn rust_main() -> ! {
         println!();
         println!("xv6-rust is booting");
         println!();
+        init_page_allocator();
         KERNEL_HEAP.kinit();
         kvm_init(); // init kernel page table
         PROC_MANAGER.proc_init(); // process table

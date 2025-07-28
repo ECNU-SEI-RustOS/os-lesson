@@ -14,7 +14,7 @@ pub mod kalloc;
 mod kvm;
 mod pagetable;
 mod list;
-mod page_allocator;
+pub mod page_allocator;
 
 /// Used to alloc pages-sized and page-aligned memory.
 /// The impl typically using Box::new() and then Box::into_raw(). 
