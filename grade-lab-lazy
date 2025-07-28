@@ -20,4 +20,3 @@ def test_memtest():
     r.match("test lazy alloc: OK$")
 
 run_tests()
-
