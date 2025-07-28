@@ -269,8 +269,8 @@ impl InodeCache {
         if path[0] == b'/' {
             inode = self.get(ROOTDEV, ROOTINUM);
         } else {
-            let p = unsafe { CPU_MANAGER.my_proc() };
-            inode = self.dup(p.data.get_mut().cwd.as_ref().unwrap());
+            let process = unsafe { CPU_MANAGER.my_proc() };
+            inode = self.dup(process.data.get_mut().cwd.as_ref().unwrap());
         }
 
         let mut cur: usize = 0;

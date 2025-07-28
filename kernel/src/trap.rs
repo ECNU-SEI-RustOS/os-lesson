@@ -31,7 +31,7 @@ pub unsafe extern fn user_trap() {
     extern "C" {fn kernelvec();}
     stvec::write(kernelvec as usize);
 
-    let p = CPU_MANAGER.my_proc();
+    let process = CPU_MANAGER.my_proc();
 
     let scause = Scause::read();
 
@@ -51,7 +51,7 @@ pub unsafe extern fn user_trap() {
                 plic::complete(irq);
             }
 
-            p.check_abondon(-1);
+            process.check_abondon(-1);
         }
         Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
@@ -65,18 +65,18 @@ pub unsafe extern fn user_trap() {
             sip::clear_ssip();
 
             // give up the cpu
-            p.check_abondon(-1);
-            p.yielding();
+            process.check_abondon(-1);
+            process.yielding();
         }
         Trap::Exception(scause::Exception::UserEnvCall)=> {
-            p.check_abondon(-1);
-            p.syscall();
-            p.check_abondon(-1);
+            process.check_abondon(-1);
+            process.syscall();
+            process.check_abondon(-1);
         }
         _ => {
             println!("scause {:?}", scause.cause());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
-            p.abondon(-1);
+            process.abondon(-1);
         }
     }
 
@@ -187,14 +187,14 @@ fn clock_intr() {
 }
 
 /// Sleep for a specified number of ticks.
-pub fn clock_sleep(p: &Process, count: usize) -> Result<(), ()> {
+pub fn clock_sleep(process: &Process, count: usize) -> Result<(), ()> {
     let mut guard = TICKS.lock();
     let old_ticks = *guard;
     while (*guard - old_ticks) < Wrapping(count) {
-        if p.killed.load(Ordering::Relaxed) {
+        if process.killed.load(Ordering::Relaxed) {
             return Err(())
         }
-        p.sleep(&TICKS as *const _ as usize, guard);
+        process.sleep(&TICKS as *const _ as usize, guard);
         guard = TICKS.lock();
     }
     Ok(())

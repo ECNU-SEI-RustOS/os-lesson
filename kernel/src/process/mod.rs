@@ -197,33 +197,33 @@ impl ProcManager {
     fn alloc_proc(&mut self) -> Option<&mut Process> {
         let new_pid = self.alloc_pid();
 
-        for p in self.table.iter_mut() {
-            let mut guard = p.excl.lock();
+        for process in self.table.iter_mut() {
+            let mut guard = process.excl.lock();
             match guard.state {
                 ProcState::UNUSED => {
                     // holding the process's excl lock,
                     // so manager can modify its private data
-                    let pd = p.data.get_mut();
+                    let pdata = process.data.get_mut();
 
                     // alloc trapframe
-                    pd.trapframe = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    pdata.trapframe = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
-                    debug_assert!(pd.pagetable.is_none());
-                    match PageTable::alloc_proc_pagetable(pd.trapframe as usize, new_pid) {
-                        Some(pgt) => pd.pagetable = Some(pgt),
+                    debug_assert!(pdata.pagetable.is_none());
+                    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, new_pid) {
+                        Some(pgt) => pdata.pagetable = Some(pgt),
                         None => {
                             unsafe {
-                                RawSinglePage::from_raw_and_drop(pd.trapframe as *mut u8);
+                                RawSinglePage::from_raw_and_drop(pdata.trapframe as *mut u8);
                             }
                             return None;
                         }
                     }
-                    pd.init_context();
+                    pdata.init_context();
                     guard.pid = new_pid;
                     guard.state = ProcState::ALLOCATED;
 
                     drop(guard);
-                    return Some(p);
+                    return Some(process);
                 }
                 _ => drop(guard),
             }
@@ -258,13 +258,13 @@ impl ProcManager {
     /// - 通过持有进程的 `excl` 自旋锁保证状态修改的原子性，避免竞态条件。
     /// - 返回时释放了锁，调用者需确保使用该进程指针时的并发安全。
     fn alloc_runnable(&mut self) -> Option<&mut Process> {
-        for p in self.table.iter_mut() {
-            let mut guard = p.excl.lock();
+        for process in self.table.iter_mut() {
+            let mut guard = process.excl.lock();
             match guard.state {
                 ProcState::RUNNABLE => {
                     guard.state = ProcState::ALLOCATED;
                     drop(guard);
-                    return Some(p);
+                    return Some(process);
                 }
                 _ => {
                     drop(guard);
@@ -304,9 +304,9 @@ impl ProcManager {
     ///     并且该索引对应的进程尚未被占用。
     /// - 在调用期间不允许并发访问 `ProcManager`，避免数据竞争。
     pub unsafe fn user_init(&mut self) {
-        let p = self.alloc_proc().expect("all process should be unused");
-        p.user_init();
-        let mut guard = p.excl.lock();
+        let process = self.alloc_proc().expect("all process should be unused");
+        process.user_init();
+        let mut guard = process.excl.lock();
         guard.state = ProcState::RUNNABLE;
     }
 
@@ -344,8 +344,8 @@ impl ProcManager {
     ///   保证了修改操作的线程安全。
     /// - 调用者必须保证调用时未持有任何进程锁，避免潜在死锁。
     pub fn wakeup(&self, channel: usize) {
-        for p in self.table.iter() {
-            let mut guard = p.excl.lock();
+        for process in self.table.iter() {
+            let mut guard = process.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
             }

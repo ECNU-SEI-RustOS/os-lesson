@@ -142,7 +142,7 @@ impl CpuManager {
             fn switch(old: *mut Context, new: *mut Context);
         }
 
-        let c = self.my_cpu_mut();
+        let cpu: &mut Cpu = self.my_cpu_mut();
 
         loop {
             // ensure devices can interrupt
@@ -150,18 +150,18 @@ impl CpuManager {
 
             // use ProcManager to find a runnable process
             match PROC_MANAGER.alloc_runnable() {
-                Some(p) => {
-                    c.process = p as *mut _;
-                    let mut guard = p.excl.lock();
+                Some(process) => {
+                    cpu.process = process as *mut _;
+                    let mut guard = process.excl.lock();
                     guard.state = ProcState::RUNNING;
 
-                    switch(&mut c.scheduler as *mut Context,
-                        p.data.get_mut().get_context());
+                    switch(&mut cpu.scheduler as *mut Context,
+                        process.data.get_mut().get_context());
                     
-                    if c.process.is_null() {
+                    if cpu.process.is_null() {
                         panic!("context switch back with no process reference");
                     }
-                    c.process = ptr::null_mut();
+                    cpu.process = ptr::null_mut();
                     drop(guard);
                 },
                 None => {},

@@ -120,16 +120,16 @@ impl Pipe {
     /// - 用户空间地址 `addr` 的有效性由 `copy_out()` 检查与处理；
     /// - 锁的获取、释放、睡眠与唤醒操作在受控环境中调用，确保不会造成死锁或竞态。
     pub(super) fn read(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let p = unsafe { CPU_MANAGER.my_proc() };
+        let process = unsafe { CPU_MANAGER.my_proc() };
 
         let mut pipe = self.0.lock();
 
         // wait for data to be written
         while pipe.read_cnt == pipe.write_cnt && pipe.write_open {
-            if p.killed.load(Ordering::Relaxed) {
+            if process.killed.load(Ordering::Relaxed) {
                 return Err(())
             }
-            p.sleep(&pipe.read_cnt as *const Wrapping<_> as usize, pipe);
+            process.sleep(&pipe.read_cnt as *const Wrapping<_> as usize, pipe);
             pipe = self.0.lock();
         }
 
@@ -140,7 +140,7 @@ impl Pipe {
             let index = (pipe.read_cnt.0 % PIPESIZE_U32) as usize;
             let byte = pipe.data[index];
             pipe.read_cnt += Wrapping(1);
-            if p.data.get_mut().copy_out(&byte as *const u8, addr+(i as usize), 1).is_err() {
+            if process.data.get_mut().copy_out(&byte as *const u8, addr+(i as usize), 1).is_err() {
                 read_count = i;
                 break
             }
@@ -186,24 +186,24 @@ impl Pipe {
     /// - 锁操作、进程休眠与唤醒在管道内部状态一致性前提下安全使用；
     /// - 写入操作严格限制在环形缓冲区有效索引范围内，避免越界访问。
     pub(super) fn write(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let p = unsafe { CPU_MANAGER.my_proc() };
+        let process = unsafe { CPU_MANAGER.my_proc() };
 
         let mut pipe = self.0.lock();
 
         let mut write_count = 0;
         while write_count < count {
-            if !pipe.read_open || p.killed.load(Ordering::Relaxed) {
+            if !pipe.read_open || process.killed.load(Ordering::Relaxed) {
                 return Err(())
             }
 
             if pipe.write_cnt == pipe.read_cnt + Wrapping(PIPESIZE_U32) {
                 // wait for data to be read
                 unsafe { PROC_MANAGER.wakeup(&pipe.read_cnt as *const Wrapping<_> as usize); }
-                p.sleep(&pipe.write_cnt as *const Wrapping<_> as usize, pipe);
+                process.sleep(&pipe.write_cnt as *const Wrapping<_> as usize, pipe);
                 pipe = self.0.lock();
             } else {
                 let mut byte: u8 = 0;
-                if p.data.get_mut().copy_in(addr+(write_count as usize), &mut byte, 1).is_err() {
+                if process.data.get_mut().copy_in(addr+(write_count as usize), &mut byte, 1).is_err() {
                     break;                    
                 }
                 let i = (pipe.write_cnt.0 % PIPESIZE_U32) as usize;
