@@ -99,6 +99,7 @@ pub struct Task {
     pub process: Option<*mut Process>,
     pub kstack: KernelStack,
     pub tid: usize,
+    pub pos: usize,
     // mutable
     inner: UnsafeCell<TaskControlInner>,
 }
@@ -122,7 +123,7 @@ impl TaskControlInner {
     }
 }
 impl Task {
-    pub fn new(process: Option<*mut Process>, ustack_base: usize, alloc_user_res: bool) -> Self {
+    pub fn new(process: Option<*mut Process>, pos:usize, ustack_base: usize, alloc_user_res: bool) -> Self {
         let tid = TID_ALLOCATOR.lock().tid_alloc();
         kinfo!("alloc tid:{}", tid);
         let res = TaskUserRes::new(process, tid, ustack_base, alloc_user_res);
@@ -174,6 +175,7 @@ impl Task {
             process,
             kstack,
             tid,
+            pos,
             inner: UnsafeCell::new(TaskControlInner {
                 res: Some(res),
                 trapframe: trap_frame,
