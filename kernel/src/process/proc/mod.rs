@@ -93,6 +93,8 @@ impl ProcExcl {
 pub struct ProcData {
     /// 进程内核栈的起始虚拟地址。
     kstack: usize,
+    ///  用户栈起始基地址。
+    ustack_base: usize,
     /// 进程使用的内存大小（字节数）。
     size: usize,
     /// 进程上下文（寄存器状态等），用于上下文切换。
@@ -116,6 +118,7 @@ impl ProcData {
     const fn new() -> Self {
         Self {
             kstack: 0,
+            ustack_base: 0,
             size: 0,
             context: Context::new(),
             name: [0; 16],
@@ -134,7 +137,10 @@ impl ProcData {
     pub fn set_kstack(&mut self, kstack: usize) {
         self.kstack = kstack;
     }
-
+    /// Set ustack_base
+    pub fn set_ustack_base(&mut self, ustack_base: usize) {
+        self.ustack_base = ustack_base;
+    }
     /// # 功能说明
     /// 初始化进程的上下文信息。该函数在进程创建后调用，
     /// 将进程上下文清零，并设置返回地址为 `fork_ret`，

@@ -150,6 +150,9 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // allocate two page for user stack
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
+
+    pdata.set_ustack_base(proc_size);
+
     match pgt.uvm_alloc(proc_size, proc_size + USER_STACK_SIZE + PAGE_SIZE) {
         Ok(ret_size) => proc_size = ret_size,
         Err(_) => {
