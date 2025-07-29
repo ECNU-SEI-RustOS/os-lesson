@@ -113,10 +113,16 @@ UPROGS=\
 	$(USER)/_grind\
 	$(USER)/_wc\
 	$(USER)/_zombie\
+	$(USER)/_sleep\
+	$(USER)/_pingpong\
+	$(USER)/_primes\
+	$(USER)/_find\
+	$(USER)/_xargs\
 
+UEXTRA = user/xargstest.sh
 
-fs.img: mkfs/mkfs README $(UPROGS)
-	mkfs/mkfs fs.img README $(UPROGS)
+fs.img: mkfs/mkfs README $(UPROGS) $(UEXTRA)
+	mkfs/mkfs fs.img README $(UPROGS) $(UEXTRA)
 
 -include user/*.d
 
