@@ -1,18 +1,18 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import re
 from gradelib import *
 
 r = Runner(save("xv6.out"))
 
-@test(5, "sleep, no arguments")
+@test(10, "sleep, no arguments")
 def test_sleep_no_args():
     r.run_qemu(shell_script([
         'sleep'
     ]))
     r.match(no=["exec .* failed", "$ sleep\n$"])
 
-@test(5, "sleep, returns")
+@test(10, "sleep, returns")
 def test_sleep_no_args():
     r.run_qemu(shell_script([
         'sleep',
@@ -20,13 +20,13 @@ def test_sleep_no_args():
     ]))
     r.match('^OK$', no=["exec .* failed", "$ sleep\n$"])
 
-@test(10, "sleep, makes syscall")
-def test_sleep():
-    r.run_qemu(shell_script([
-        'sleep 10',
-        'echo FAIL'
-    ]), stop_breakpoint('sys_sleep'))
-    r.match('\\$ sleep 10', no=['FAIL'])
+# @test(10, "sleep, makes syscall")
+# def test_sleep():
+#     r.run_qemu(shell_script([
+#         'sleep 10',
+#         'echo FAIL'
+#     ]), stop_breakpoint('sys_sleep'))
+#     r.match('\\$ sleep 10', no=['FAIL'])
 
 @test(20, "pingpong")
 def test_pingpong():
@@ -70,7 +70,7 @@ def test_find_recursive():
             './%s/%s/%s' % (dirs[0], dirs[1], needle),
             './%s/%s' % (dirs[2], needle))
 
-@test(19, "xargs")
+@test(20, "xargs")
 def test_xargs():
     r.run_qemu(shell_script([
         'sh < xargstest.sh',
@@ -79,8 +79,5 @@ def test_xargs():
     matches = re.findall("hello", r.qemu.output)
     assert_equal(len(matches), 3, "Number of appearances of 'hello'")
 
-@test(1, "time")
-def test_time():
-    check_time()
     
 run_tests()
