@@ -1,53 +1,54 @@
 use array_macro::array;
 
-use alloc::boxed::Box;
-use core::{cmp::min, convert::TryFrom};
-use core::ptr;
-use crate::consts::ConstAddr;
-use crate::consts::{PGSHIFT, PAGE_SIZE, SATP_SV39, SV39FLAGLEN, USERTEXT, TRAMPOLINE, TRAPFRAME, };
-use super::{Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr, pg_round_up};
+use super::{pg_round_up, Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr};
+use crate::consts::{ConstAddr, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
+use crate::consts::{PAGE_SIZE, PGSHIFT, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, USERTEXT};
+use crate::mm::{trapframe_from_pid, ustack_bottom_from_pid, RawQuadPage};
 
+use alloc::boxed::Box;
+use core::{ptr};
+use core::{cmp::min, convert::TryFrom};
 bitflags! {
     /// 内存页表项权限标志（Page Table Entry Flags）
     ///
     /// 该结构体定义了页表项中的各种权限和状态标志，
-    /// 用于控制虚拟内存页的访问权限和管理信息。  
-    /// 在xv6教学操作系统内核中，`PteFlag` 用于设置页表项的读/写/执行权限，  
+    /// 用于控制虚拟内存页的访问权限和管理信息。
+    /// 在xv6教学操作系统内核中，`PteFlag` 用于设置页表项的读/写/执行权限，
     /// 是否有效，用户态访问权限，以及辅助标志（如访问和修改标志）。
     pub struct PteFlag: usize {
-        /// 有效位（Valid）  
+        /// 有效位（Valid）
         /// 标记该页表项是否有效，若无效则该项不代表有效映射。
         const V = 1 << 0;
-        
-        /// 读权限（Readable）  
+
+        /// 读权限（Readable）
         /// 允许访问该页进行读取操作。
         const R = 1 << 1;
-        
-        /// 写权限（Writable）  
+
+        /// 写权限（Writable）
         /// 允许访问该页进行写入操作。
         const W = 1 << 2;
-        
-        /// 执行权限（Executable）  
+
+        /// 执行权限（Executable）
         /// 允许该页内存中的指令被执行。
         const X = 1 << 3;
-        
-        /// 用户态访问权限（User）  
+
+        /// 用户态访问权限（User）
         /// 允许用户模式访问该页。
         const U = 1 << 4;
-        
-        /// 全局位（Global）  
+
+        /// 全局位（Global）
         /// 标记该页为全局页，不随地址空间切换而失效。
         const G = 1 << 5;
-        
-        /// 访问位（Accessed）  
+
+        /// 访问位（Accessed）
         /// CPU硬件设置，表示该页曾被访问过。
         const A = 1 << 6;
-        
-        /// 脏位（Dirty）  
+
+        /// 脏位（Dirty）
         /// CPU硬件设置，表示该页曾被写入。
         const D = 1 << 7;
-        
-        /// 保留供软件使用位（Reserved for Software）  
+
+        /// 保留供软件使用位（Reserved for Software）
         /// 两位宽的软件标志位，供操作系统使用。
         const RSW = 0b11 << 8;
     }
@@ -67,6 +68,9 @@ pub struct PageTableEntry {
 }
 
 impl PageTableEntry {
+    pub fn copy_from(&mut self, other:&Self) {
+        self.data = other.data;
+    }
     #[inline]
     pub fn is_valid(&self) -> bool {
         (self.data & (PteFlag::V.bits())) > 0
@@ -74,7 +78,7 @@ impl PageTableEntry {
 
     #[inline]
     fn is_leaf(&self) -> bool {
-        let flag_bits = self.data & (PteFlag::R|PteFlag::W|PteFlag::X).bits();
+        let flag_bits = self.data & (PteFlag::R | PteFlag::W | PteFlag::X).bits();
         !(flag_bits == 0)
     }
 
@@ -308,7 +312,7 @@ impl PageTable {
 
     /// 与 [walk_alloc] 功能相同，
     /// 但如果页表不存在时不会分配新的页表。
-    fn find_pte_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
+    pub fn find_pte_mut(&mut self, va: VirtAddr) -> Option<&mut PageTableEntry> {
         let mut pagetable = self as *mut PageTable;
         for level in (1..=2).rev() {
             let pte = unsafe { &mut pagetable.as_mut().unwrap().data[va.page_num(level)] };
@@ -316,7 +320,7 @@ impl PageTable {
             if pte.is_valid() {
                 pagetable = pte.as_page_table();
             } else {
-                return None
+                return None;
             }
         }
         unsafe { Some(&mut pagetable.as_mut().unwrap().data[va.page_num(0)]) }
@@ -332,7 +336,7 @@ impl PageTable {
             if pte.is_valid() {
                 pagetable = pte.as_page_table();
             } else {
-                return None
+                return None;
             }
         }
         unsafe { Some(&pagetable.as_ref().unwrap().data[va.page_num(0)]) }
@@ -340,9 +344,7 @@ impl PageTable {
 
     /// 与 [walk_addr] 功能相同，
     /// 但返回的物理地址指向的数据可以被修改。
-    pub fn find_pa_mut(&mut self, va: VirtAddr)
-        -> Result<PhysAddr, &'static str>
-    {
+    pub fn find_pa_mut(&mut self, va: VirtAddr) -> Result<PhysAddr, &'static str> {
         match self.find_pte_mut(va) {
             Some(pte) => {
                 if !pte.is_valid() {
@@ -353,9 +355,7 @@ impl PageTable {
                     Ok(pte.as_phys_addr())
                 }
             }
-            None => {
-                Err("va not mapped")
-            }
+            None => Err("va not mapped"),
         }
     }
 
@@ -381,9 +381,7 @@ impl PageTable {
     /// - 函数为安全接口，不涉及 `unsafe` 操作。  
     /// - 调用者需保证 `va` 是合法的虚拟地址，避免频繁错误调用。  
     /// - 函数不修改页表，适合查询用途，线程安全。
-    pub fn find_pa(&self, va: VirtAddr)
-        -> Result<PhysAddr, &'static str>
-    {
+    pub fn find_pa(&self, va: VirtAddr) -> Result<PhysAddr, &'static str> {
         match self.find_pte(va) {
             Some(pte) => {
                 if !pte.is_valid() {
@@ -394,9 +392,7 @@ impl PageTable {
                     Ok(pte.as_phys_addr())
                 }
             }
-            None => {
-                Err("va not mapped")
-            }
+            None => Err("va not mapped"),
         }
     }
 
@@ -444,7 +440,22 @@ impl PageTable {
                 PteFlag::R | PteFlag::W,
             )
             .ok()?;
-
+        //create the first task's ustack
+        // let mem = match unsafe { RawQuadPage::try_new_zeroed() } {
+        //     Ok(res) => res as usize,
+        //     Err(_) => panic!("memory not enough"),
+        // };
+        // let va =VirtAddr::from(ustack_bottom_from_pid(1));
+        // match pagetable
+        //             .map_pages(
+        //                 va,
+        //                 USER_STACK_SIZE,
+        //                 PhysAddr::try_from(mem).unwrap(),
+        //                 PteFlag::R | PteFlag::W | PteFlag::U,
+        //             ) {
+        //     Ok(_) => {},
+        //     Err(_) => {panic!("sad")},
+        // };
         Some(pagetable)
     }
 
@@ -472,10 +483,50 @@ impl PageTable {
     pub fn dealloc_proc_pagetable(&mut self, proc_size: usize, pid: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
         self.uvm_unmap(trapframe_from_pid(pid).into(), 1, false);
+        //self.uvm_unmap(ustack_bottom_from_pid(1).into(), 4, false);
         // free physical memory
         if proc_size > 0 {
             self.uvm_unmap(0, pg_round_up(proc_size)/PAGE_SIZE, true);
         }
+    }
+        /// 根据当前线程数量和ustack_base分配用户栈
+    /// # 返回值
+    /// - `Ok(usize)`：返回实际分配后的ustack(栈向下生长)起始位置（字节）。
+    pub fn uvm_alloc_ustack(&mut self, ustack_base: usize, pos: usize) -> Result<usize, &str> {
+        if pos >= MAX_TASKS_PER_PROC {
+            return Err("too many tasks");
+        }
+        let ustack_bottom = ustack_bottom_by_pos(ustack_base, pos);
+        let ustack_top = ustack_bottom + USER_STACK_SIZE;
+
+        for vaddr in (ustack_bottom..ustack_top).step_by(PAGE_SIZE) {
+            match unsafe { RawSinglePage::try_new_zeroed() } {
+                Err(_) => return Err("no enough physical memory"),
+                Ok(mem) => {
+                    match self.map_pages(
+                        unsafe { VirtAddr::from_raw(vaddr) },
+                        PAGE_SIZE,
+                        unsafe { PhysAddr::from_raw(mem as usize) },
+                        PteFlag::R | PteFlag::W | PteFlag::U,
+                    ) {
+                        Err(s) => {
+                            unsafe {
+                                RawSinglePage::from_raw_and_drop(mem);
+                            }
+                            return Err("no enough virtual memory");
+                        }
+                        Ok(_) => {
+                            // the mem raw pointer is leaked
+                            // but recorded in the pagetable at virtual address cur_size
+                        }
+                    }
+                }
+            }
+        }
+        Ok(ustack_top)
+    }
+    pub fn dealloc_ustack_by_pos(&mut self, ustack_base: usize, pos: usize) {
+
     }
 
     /// # 功能说明
@@ -504,15 +555,18 @@ impl PageTable {
         if code.len() >= PAGE_SIZE {
             panic!("initcode more than a page");
         }
- 
+
         let mem = unsafe { RawSinglePage::new_zeroed() as *mut u8 };
         self.map_pages(
             VirtAddr::from(USERTEXT),
             PAGE_SIZE,
             PhysAddr::try_from(mem as usize).unwrap(),
-            PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U)
-            .expect("map_page error");
-        unsafe { ptr::copy_nonoverlapping(code.as_ptr(), mem, code.len()); }
+            PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U,
+        )
+        .expect("map_page error");
+        unsafe {
+            ptr::copy_nonoverlapping(code.as_ptr(), mem, code.len());
+        }
     }
 
     /// # 功能说明
@@ -542,7 +596,7 @@ impl PageTable {
     /// - 返回的用户空间大小为页对齐值，调用者需留意对齐细节。
     pub fn uvm_alloc(&mut self, old_size: usize, new_size: usize) -> Result<usize, ()> {
         if new_size <= old_size {
-            return Ok(old_size)
+            return Ok(old_size);
         }
 
         let old_size = pg_round_up(old_size);
@@ -550,28 +604,30 @@ impl PageTable {
             match unsafe { RawSinglePage::try_new_zeroed() } {
                 Err(_) => {
                     self.uvm_dealloc(cur_size, old_size);
-                    return Err(())
-                },
+                    return Err(());
+                }
                 Ok(mem) => {
                     match self.map_pages(
                         unsafe { VirtAddr::from_raw(cur_size) },
-                        PAGE_SIZE, 
-                        unsafe { PhysAddr::from_raw(mem as usize) }, 
-                        PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U
+                        PAGE_SIZE,
+                        unsafe { PhysAddr::from_raw(mem as usize) },
+                        PteFlag::R | PteFlag::W | PteFlag::X | PteFlag::U,
                     ) {
                         Err(s) => {
                             #[cfg(feature = "kernel_warning")]
                             println!("kernel warning: uvm_alloc occurs {}", s);
-                            unsafe { RawSinglePage::from_raw_and_drop(mem); }
+                            unsafe {
+                                RawSinglePage::from_raw_and_drop(mem);
+                            }
                             self.uvm_dealloc(cur_size, old_size);
-                            return Err(())
-                        },
+                            return Err(());
+                        }
                         Ok(_) => {
                             // the mem raw pointer is leaked
                             // but recorded in the pagetable at virtual address cur_size
-                        },
+                        }
                     }
-                },
+                }
             }
         }
 
@@ -601,7 +657,7 @@ impl PageTable {
     /// - 释放操作应在单线程环境或已同步环境下执行。
     pub fn uvm_dealloc(&mut self, old_size: usize, new_size: usize) -> usize {
         if new_size >= old_size {
-            return old_size
+            return old_size;
         }
 
         let old_size_aligned = pg_round_up(old_size);
@@ -642,9 +698,10 @@ impl PageTable {
             panic!("va not page aligned");
         }
 
-        for ca in (va..(va+PAGE_SIZE*count)).step_by(PAGE_SIZE) {
-            let pte = self.find_pte_mut(unsafe {VirtAddr::from_raw(ca)})
-                                        .expect("unable to find va available");
+        for ca in (va..(va + PAGE_SIZE * count)).step_by(PAGE_SIZE) {
+            let pte = self
+                .find_pte_mut(unsafe { VirtAddr::from_raw(ca) })
+                .expect("unable to find va available");
             if !pte.is_valid() {
                 panic!("this pte is not valid");
             }
@@ -653,7 +710,9 @@ impl PageTable {
             }
             if freeing {
                 let pa = pte.as_phys_addr();
-                unsafe { RawSinglePage::from_raw_and_drop(pa.into_raw() as *mut u8); }
+                unsafe {
+                    RawSinglePage::from_raw_and_drop(pa.into_raw() as *mut u8);
+                }
             }
             pte.write_zero();
         }
@@ -678,8 +737,9 @@ impl PageTable {
     /// - 函数修改页表项权限，调用时需确保虚拟地址合法且页表状态一致。  
     /// - 该操作影响用户态访问权限，错误使用可能导致用户程序异常或安全问题。
     pub fn uvm_clear(&mut self, va: usize) {
-        let pte = self.find_pte_mut(VirtAddr::try_from(va).unwrap())
-                                                .expect("cannot find available pte");
+        let pte = self
+            .find_pte_mut(VirtAddr::try_from(va).unwrap())
+            .expect("cannot find available pte");
         pte.clear_user();
     }
 
@@ -713,19 +773,43 @@ impl PageTable {
             let mem = unsafe { pte.try_clone() };
             if let Ok(mem) = mem {
                 let perm = pte.read_perm();
-                if child_pgt.map_pages(va, PAGE_SIZE,
-                    unsafe { PhysAddr::from_raw(mem as usize) }, perm).is_ok()
+                if child_pgt
+                    .map_pages(
+                        va,
+                        PAGE_SIZE,
+                        unsafe { PhysAddr::from_raw(mem as usize) },
+                        perm,
+                    )
+                    .is_ok()
                 {
-                    continue
+                    continue;
                 }
-                unsafe { RawSinglePage::from_raw_and_drop(mem); }
+                unsafe {
+                    RawSinglePage::from_raw_and_drop(mem);
+                }
             }
-            child_pgt.uvm_unmap(0, i/PAGE_SIZE, true);
-            return Err(())
+            child_pgt.uvm_unmap(0, i / PAGE_SIZE, true);
+            return Err(());
         }
         Ok(())
     }
-
+    pub fn uvm_copy_ustack(
+        &mut self,
+        ppid: usize,
+        child_pgt: &mut Self,
+        cpid: usize
+    ) -> Result<(), ()> {
+        let c_ustack_bottom= ustack_bottom_from_pid(1);
+        let p_ustack_bottom = ustack_bottom_from_pid(1);
+        for offset in (0..USER_STACK_SIZE).step_by(PAGE_SIZE){
+            let cva = c_ustack_bottom.const_add(offset);
+            let pva = p_ustack_bottom.const_add(offset);
+            let cpte = child_pgt.find_pte_mut(cva.into()).expect("cpte not exist");
+            let ppte = self.find_pte(pva.into()).expect("ppte not exist");
+            cpte.copy_from(ppte);
+        }
+        Ok(())
+    }
     /// # 功能说明
     /// 从用户虚拟地址 `srcva` 处开始，复制一个以空字符 (`0`) 结尾的字符串到内核缓冲区 `dst` 中。  
     /// 复制过程逐页访问，自动处理页边界，直到遇到字符串结束符或目标缓冲区满。  
@@ -748,9 +832,7 @@ impl PageTable {
     /// - 函数内部使用了大量 `unsafe` 操作裸指针读取内存，调用时需确保页表映射正确且内存有效。  
     /// - 访问用户虚拟地址时，需防止越界和非法访问，避免内核崩溃。  
     /// - 该函数为只读操作，不修改用户内存，调用时线程安全。
-    pub fn copy_in_str(&self, srcva: usize, dst: &mut [u8])
-        -> Result<(), &'static str>
-    {
+    pub fn copy_in_str(&self, srcva: usize, dst: &mut [u8]) -> Result<(), &'static str> {
         let mut i: usize = 0;
         let mut va = VirtAddr::try_from(srcva)?;
 
@@ -759,20 +841,16 @@ impl PageTable {
             let mut base = va;
             base.pg_round_down();
             let distance = (va - base).as_usize();
-            let mut pa_ptr = unsafe {
-                self.find_pa(base)?
-                    .as_ptr()
-                    .offset(distance as isize)
-            };
+            let mut pa_ptr = unsafe { self.find_pa(base)?.as_ptr().offset(distance as isize) };
             let mut va_ptr = va.as_ptr();
-            
+
             // iterate througn each u8 in a page
             let mut count = min(PAGE_SIZE - distance, dst.len() - i);
             while count > 0 {
                 unsafe {
                     dst[i] = ptr::read(pa_ptr);
                     if dst[i] == 0 {
-                        return Ok(())
+                        return Ok(());
                     }
                     i += 1;
                     count -= 1;
@@ -812,14 +890,20 @@ impl PageTable {
     /// - 使用了大量 `unsafe` 代码访问裸指针，调用者需保证源地址有效且目标内存可写。  
     /// - 目标地址必须是合法且映射的用户空间地址，否则可能引发内存安全问题。  
     /// - 该函数操作涉及内核与用户空间交互，调用时需确保上下文安全及同步。
-    pub fn copy_out(&mut self, mut src: *const u8, mut dst: usize, mut count: usize)
-        -> Result<(), ()>
-    {
+    pub fn copy_out(
+        &mut self,
+        mut src: *const u8,
+        mut dst: usize,
+        mut count: usize,
+    ) -> Result<(), ()> {
         if count == 0 {
-            return Ok(())
+            return Ok(());
         }
 
-        let mut va = VirtAddr::try_from(dst).map_err(|_| ())?;
+        let mut va = match VirtAddr::try_from(dst).map_err(|_| ()) {
+            Err(_) => panic!("va error"),
+            Ok(res) => res,
+        }; 
         va.pg_round_down();
         loop {
             let mut pa;
@@ -828,7 +912,8 @@ impl PageTable {
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
                     println!("kernel warning: {} when pagetable copy_out", s);
-                    return Err(())
+                    panic!("no map {:x}",va.into_raw());
+                    return Err(());
                 }
             }
             let off = dst - va.as_usize();
@@ -836,10 +921,14 @@ impl PageTable {
             let off = off as isize;
             let dst_ptr = unsafe { pa.as_mut_ptr().offset(off) };
             if off_from_end > count {
-                unsafe { ptr::copy(src, dst_ptr, count); }
-                return Ok(())
+                unsafe {
+                    ptr::copy(src, dst_ptr, count);
+                }
+                return Ok(());
             }
-            unsafe { ptr::copy(src, dst_ptr, off_from_end); }
+            unsafe {
+                ptr::copy(src, dst_ptr, off_from_end);
+            }
             count -= off_from_end;
             src = unsafe { src.offset(off_from_end as isize) };
             dst += off_from_end;
@@ -872,9 +961,7 @@ impl PageTable {
     /// - 内部大量使用 `unsafe` 访问裸指针和用户内存，调用时需保证内存有效和映射正确。  
     /// - 调用者需保证 `dst` 指向有效内核内存且足够大以容纳复制内容。  
     /// - 函数不会修改用户空间数据，属于只读操作，调用时线程安全。
-    pub fn copy_in(&self, mut src: usize, mut dst: *mut u8, mut count: usize)
-        -> Result<(), ()>
-    {
+    pub fn copy_in(&self, mut src: usize, mut dst: *mut u8, mut count: usize) -> Result<(), ()> {
         let mut va = VirtAddr::try_from(src).unwrap();
         va.pg_round_down();
 
@@ -884,7 +971,7 @@ impl PageTable {
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
                     println!("kernel warning: {} when pagetable copy_in", s);
-                    return Err(())
+                    return Err(());
                 }
             }
         }
@@ -896,7 +983,7 @@ impl PageTable {
                 Err(s) => {
                     #[cfg(feature = "kernel_warning")]
                     println!("kernel warning: {} when pagetable copy_in", s);
-                    return Err(())
+                    return Err(());
                 }
             }
             let off = src - va.as_usize();
@@ -904,10 +991,14 @@ impl PageTable {
             let off = off as isize;
             let src_ptr = unsafe { pa.as_ptr().offset(off) };
             if off_from_end > count {
-                unsafe { ptr::copy(src_ptr, dst, count); }
-                return Ok(())
+                unsafe {
+                    ptr::copy(src_ptr, dst, count);
+                }
+                return Ok(());
             }
-            unsafe { ptr::copy(src_ptr, dst, off_from_end); }
+            unsafe {
+                ptr::copy(src_ptr, dst, off_from_end);
+            }
             count -= off_from_end;
             src += off_from_end;
             dst = unsafe { dst.offset(off_from_end as isize) };
@@ -941,7 +1032,7 @@ impl Drop for PageTable {
     }
 }
 
-/// get the trapframe ptr in user space
-fn trapframe_from_pid(pid: usize) -> ConstAddr {
-    TRAPFRAME.const_sub(pid * PAGE_SIZE)
+/// calucate the task user stack in the userspace
+fn ustack_bottom_by_pos(ustack_base: usize, pos: usize) -> usize {
+    ustack_base - pos * (PAGE_SIZE + USER_STACK_SIZE)
 }
