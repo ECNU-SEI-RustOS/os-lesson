@@ -169,8 +169,7 @@ impl ProcManager {
     ///   保证多线程环境下的安全访问。
     /// - 调用此函数本身是安全的，无需额外 `unsafe` 块。
     fn alloc_pid(&self) -> usize {
-        let pid = PID_ALLOCATOR.lock().pid_alloc();
-        pid
+        todo!()
     }
 
     /// # 功能说明
@@ -202,7 +201,7 @@ impl ProcManager {
     /// - 分配陷阱帧时使用了 `unsafe`，调用 `RawSinglePage::try_new_zeroed()`，
     ///   需要保证底层内存分配正确且有效。
     fn alloc_proc(&mut self) -> Option<&mut Process> {
-        let new_pid = self.alloc_pid();
+        
 
         for process in self.table.iter_mut() {
             let mut guard = process.excl.lock();
@@ -214,7 +213,7 @@ impl ProcManager {
 
                     // alloc trapframe
                     pdata.trapframe = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
-
+                    let new_pid = PID_ALLOCATOR.lock().pid_alloc();
                     debug_assert!(pdata.pagetable.is_none());
                     match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, new_pid) {
                         Some(pgt) => pdata.pagetable = Some(pgt),
