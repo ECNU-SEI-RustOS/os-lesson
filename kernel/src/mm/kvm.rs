@@ -3,8 +3,7 @@ use core::convert::{TryFrom, Into};
 use core::mem;
 
 use crate::consts::{
-    CLINT, CLINT_MAP_SIZE, KERNBASE, PHYSTOP, PLIC, PLIC_MAP_SIZE, UART0, UART0_MAP_SIZE, VIRTIO0,
-    VIRTIO0_MAP_SIZE, TRAMPOLINE, PAGE_SIZE
+    CLINT, CLINT_MAP_SIZE, KERNBASE, KERNEL_HEAP_END, PAGE_SIZE, PHYSTOP, PLIC, PLIC_MAP_SIZE, TRAMPOLINE, UART0, UART0_MAP_SIZE, VIRTIO0, VIRTIO0_MAP_SIZE
 };
 use crate::register::satp;
 use super::{Addr, PageTable, PhysAddr, PteFlag, VirtAddr, RawSinglePage, RawDoublePage, RawQuadPage};
@@ -117,7 +116,14 @@ pub unsafe fn kvm_init() {
     kvm_map(
         VirtAddr::try_from(etext).unwrap(),
         PhysAddr::try_from(etext).unwrap(),
-        usize::from(PHYSTOP) - etext,
+        usize::from(KERNEL_HEAP_END) - etext,
+        PteFlag::R | PteFlag::W,
+    );
+
+    kvm_map(
+        VirtAddr::from(KERNEL_HEAP_END),
+        PhysAddr::from(KERNEL_HEAP_END),
+        usize::from(PHYSTOP) - usize::from(KERNEL_HEAP_END),
         PteFlag::R | PteFlag::W,
     );
 
