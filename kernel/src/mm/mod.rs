@@ -1,9 +1,9 @@
 use alloc::boxed::Box;
 use core::{alloc::AllocError, ptr};
 
-use crate::consts::PAGE_SIZE;
+use crate::consts::ConstAddr;
 use crate::process::CPU_MANAGER;
-
+use crate::consts::{TRAPFRAME,PAGE_SIZE,USER_STACK_SIZE};
 pub use addr::{Addr, PhysAddr, VirtAddr};
 pub use kvm::{kvm_init, kvm_init_hart, kvm_map, kvm_pa};
 pub use pagetable::{PageTable, PteFlag};
@@ -141,4 +141,16 @@ pub fn pg_round_up(address: usize) -> usize {
 #[inline]
 pub fn pg_round_down(address: usize) -> usize {
     address & !(PAGE_SIZE - 1)
+}
+
+#[inline]
+/// get the trapframe ptr in user space by pid
+pub fn trapframe_from_pid(pid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(pid * (PAGE_SIZE + USER_STACK_SIZE))
+}
+
+#[inline]
+/// get the trapframe ptr in user space by pid
+pub fn ustack_bottom_from_pid(pid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE + USER_STACK_SIZE))
 }

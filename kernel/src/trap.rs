@@ -3,7 +3,8 @@
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ, PAGE_SIZE, ConstAddr}, process::{Process, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
+use crate::mm::trapframe_from_pid;
+use crate::{consts::{ConstAddr, PAGE_SIZE, TRAMPOLINE, TRAPFRAME, UART0_IRQ, USER_STACK_SIZE, VIRTIO0_IRQ}, process::{Process, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -205,7 +206,3 @@ pub fn clock_read() -> usize {
     TICKS.lock().0
 }
 
-/// get the trapframe ptr in user space by pid
-fn trapframe_from_pid(pid: usize) -> ConstAddr {
-    TRAPFRAME.const_sub(pid * PAGE_SIZE)
-}
