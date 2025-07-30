@@ -7,6 +7,7 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::consts::KERNEL_STACK_SIZE;
+use crate::consts::PAGE_SIZE;
 use crate::consts::{fs::ROOTDEV, NPROC, TRAMPOLINE};
 use crate::fs;
 use crate::mm::{
@@ -132,7 +133,7 @@ impl ProcManager {
             // Map it high in memory, followed by an invalid
             // guard page.
             let pa = RawQuadPage::new_zeroed() as usize;
-            let va = kstack(pos);
+            let va = kstack_by_pos(pos);
             kvm_map(
                 VirtAddr::try_from(va).unwrap(),
                 PhysAddr::try_from(pa).unwrap(),
@@ -700,6 +701,6 @@ unsafe fn fork_ret() -> ! {
 ///
 /// - 返回 `usize` 类型的虚拟地址，表示对应进程内核栈的起始地址（栈顶地址）。
 #[inline]
-fn kstack(pos: usize) -> usize {
-    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * KERNEL_STACK_SIZE
+fn kstack_by_pos(pos: usize) -> usize {
+    Into::<usize>::into(TRAMPOLINE) - (pos + 1) * (KERNEL_STACK_SIZE + PAGE_SIZE)
 }

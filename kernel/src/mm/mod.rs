@@ -12,7 +12,7 @@ pub use kalloc::{KernelHeap, KERNEL_HEAP};
 mod addr;
 pub mod kalloc;
 mod kvm;
-mod pagetable;
+pub mod pagetable;
 mod list;
 pub mod page_allocator;
 
@@ -146,11 +146,5 @@ pub fn pg_round_down(address: usize) -> usize {
 #[inline]
 /// get the trapframe ptr in user space by pid
 pub fn trapframe_from_pid(pid: usize) -> ConstAddr {
-    TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE + USER_STACK_SIZE) + PAGE_SIZE)
-}
-
-#[inline]
-/// get the trapframe ptr in user space by pid
-pub fn ustack_bottom_from_pid(pid: usize) -> ConstAddr {
-    TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE + USER_STACK_SIZE) + PAGE_SIZE + USER_STACK_SIZE)
+    TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE) + PAGE_SIZE)
 }

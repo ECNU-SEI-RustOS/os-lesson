@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
-use crate::process::proc::task::Task;
+use crate::process::task::task::Task;
 use crate::process::task_manager;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, RawPage, RawSinglePage};
@@ -26,7 +26,6 @@ use self::syscall::Syscall;
 
 mod syscall;
 mod elf;
-mod task;
 pub mod pid;
 pub mod manager;
 
@@ -140,6 +139,10 @@ impl ProcData {
     /// Set ustack_base
     pub fn set_ustack_base(&mut self, ustack_base: usize) {
         self.ustack_base = ustack_base;
+    }
+    /// Set ustack_base
+    pub fn get_ustack_base(&self) -> usize {
+        self.ustack_base
     }
     /// # 功能说明
     /// 初始化进程的上下文信息。该函数在进程创建后调用，

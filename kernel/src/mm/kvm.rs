@@ -6,6 +6,7 @@ use crate::consts::{
     CLINT, CLINT_MAP_SIZE, KERNBASE, KERNEL_HEAP_END, PAGE_SIZE, PHYSTOP, PLIC, PLIC_MAP_SIZE, TRAMPOLINE, UART0, UART0_MAP_SIZE, VIRTIO0, VIRTIO0_MAP_SIZE
 };
 use crate::register::satp;
+use crate::spinlock::SpinLock;
 use super::{Addr, PageTable, PhysAddr, PteFlag, VirtAddr, RawSinglePage, RawDoublePage, RawQuadPage};
 
 /// 内核页表（Kernel Page Table）
@@ -140,6 +141,7 @@ pub unsafe fn kvm_init() {
     );
 }
 
+static mut kernel_table_lock:SpinLock<usize> = SpinLock::new(0, "lock");
 /// 在内核全局页表 `KERNEL_PAGE_TABLE` 上建立虚拟地址到物理地址的映射。  
 /// 映射从虚拟地址 `va` 开始，长度为 `size` 字节，权限由 `perm` 指定。  
 /// 该函数负责调用底层页表映射方法，添加连续页的映射关系。
@@ -151,10 +153,11 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
         pa.as_usize(),
         size
     );
-
+    let spin_lock_guard = kernel_table_lock.lock();
     if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
         panic!("kvm_map: {}", err);
     }
+    drop(spin_lock_guard);
 }
 
 /// # 功能说明
