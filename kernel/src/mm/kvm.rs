@@ -1,6 +1,7 @@
 use core::arch::asm;
 use core::convert::{TryFrom, Into};
 use core::mem;
+use core::ops::DerefMut;
 
 use crate::consts::{
     CLINT, CLINT_MAP_SIZE, KERNBASE, KERNEL_HEAP_END, PAGE_SIZE, PHYSTOP, PLIC, PLIC_MAP_SIZE, TRAMPOLINE, UART0, UART0_MAP_SIZE, VIRTIO0, VIRTIO0_MAP_SIZE
@@ -160,6 +161,23 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
     drop(spin_lock_guard);
 }
 
+pub unsafe fn kvm_task_kstack_map(va: VirtAddr, pa: PhysAddr, tid : usize,size: usize, perm: PteFlag) {
+    #[cfg(feature = "verbose_init_info")]
+    println!(
+        "kvm_map: va={:#x}, pa={:#x}, size={:#x}",
+        va.as_usize(),
+        pa.as_usize(),
+        size
+    );
+    let mut spin_lock_guard = kernel_table_lock.lock();
+    if *spin_lock_guard <= tid {
+        if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
+            panic!("kvm_map: {}", err);
+        }
+    }
+    *spin_lock_guard.deref_mut() += 1;
+    drop(spin_lock_guard);
+}
 /// # 功能说明
 /// 将内核虚拟地址 `va` 转换为对应的物理地址。  
 /// 该函数通过页表查找 `va` 对应的页表项，验证其有效性，  
