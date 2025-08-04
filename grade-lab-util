@@ -87,7 +87,7 @@ def test_sleep_no_args():
     ]))
     r.match(no=["exec .* failed", "$ sleep\n$"])
 
-@test(10, "sleep, returns")
+@test(10, "sleep_rust, returns")
 def test_sleep_no_args():
     r.run_qemu(shell_script([
         'sleep_rust',
@@ -100,5 +100,14 @@ def test_pingpong():
         'pingpong_rust', 'echo OK'
     ]))
     r.match('^\\d+: received ping$', '^\\d+: received pong$', '^OK$')
+
+@test(20, "primes_rust")
+def test_primes():
+    r.run_qemu(shell_script([
+        'primes', 'echo OK'
+    ]))
+    args = ['prime %d' % i for i in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]]
+    args.append('^OK$')
+    r.match(*args)
 
 run_tests()

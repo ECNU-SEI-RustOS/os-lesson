@@ -34,6 +34,10 @@ impl Default for FileT{
     }
 }
 
+pub const DIRSIZ: usize = 14;
+pub const T_DIR: u16 = 1;
+pub const T_FILE: u16 = 2;
+
 #[derive(Default,Debug)]
 pub struct Stat{
     pub dev: i32,
@@ -41,6 +45,12 @@ pub struct Stat{
     pub ftype: FileT,
     pub nlink: u16,
     pub size: u64
+}
+
+#[repr(C)]
+pub struct Dirent {
+    pub inum: u16,
+    pub name: [u8; DIRSIZ],
 }
 
 #[repr(C)]

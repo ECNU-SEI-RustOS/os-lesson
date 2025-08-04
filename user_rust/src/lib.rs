@@ -12,6 +12,7 @@ pub mod ralloc;
 pub mod file;
 pub mod time;
 pub mod thread;
+pub mod ulib;
 
 extern crate alloc;
 extern crate syscall_riscv;
