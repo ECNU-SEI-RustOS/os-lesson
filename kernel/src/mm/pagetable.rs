@@ -3,7 +3,8 @@ use array_macro::array;
 use super::{pg_round_up, Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr};
 use crate::consts::{ConstAddr, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
 use crate::consts::{PAGE_SIZE, PGSHIFT, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, USERTEXT};
-use crate::mm::{trapframe_from_pid, ustack_bottom_from_pid, RawQuadPage};
+use crate::mm::page_allocator::{page_alloc, PAGE_ALLOCATOR};
+use crate::mm::{pagetable, trapframe_from_pid, RawQuadPage};
 
 use alloc::boxed::Box;
 use core::{ptr};
@@ -255,7 +256,8 @@ impl PageTable {
                             pa.as_usize(),
                             pte.data
                         );
-                        panic!("remap");
+                        // kinfo!("remap at {:x}",self.as_satp());
+                        return Err("remap");
                     }
                     pte.write_perm(pa, perm);
                     va.add_page();
@@ -396,6 +398,19 @@ impl PageTable {
         }
     }
 
+    pub fn find_pa_by_kernel(&self, va: VirtAddr) -> Result<PhysAddr, &'static str> {
+        match self.find_pte(va) {
+            Some(pte) => {
+                if !pte.is_valid() {
+                    Err("pte not valid")
+                } else {
+                    Ok(pte.as_phys_addr())
+                }
+            }
+            None => Err("va not mapped"),
+        }
+    }
+
     /// # 功能说明
     /// 分配并初始化一个新的进程页表，
     /// 包含对陷阱处理跳板（trampoline）和进程陷阱帧（trapframe）内存区域的映射。  
@@ -440,6 +455,7 @@ impl PageTable {
                 PteFlag::R | PteFlag::W,
             )
             .ok()?;
+        kinfo!("user space map {:?}",VirtAddr::from(trapframe_from_pid(pid)));
         //create the first task's ustack
         // let mem = match unsafe { RawQuadPage::try_new_zeroed() } {
         //     Ok(res) => res as usize,
@@ -496,8 +512,8 @@ impl PageTable {
         if pos >= MAX_TASKS_PER_PROC {
             return Err("too many tasks");
         }
-        let ustack_bottom = ustack_bottom_by_pos(ustack_base, pos);
-        let ustack_top = ustack_bottom + USER_STACK_SIZE;
+        let ustack_top = ustack_bottom_by_pos(ustack_base, pos);
+        let ustack_bottom = ustack_top - USER_STACK_SIZE;
 
         for vaddr in (ustack_bottom..ustack_top).step_by(PAGE_SIZE) {
             match unsafe { RawSinglePage::try_new_zeroed() } {
@@ -526,7 +542,9 @@ impl PageTable {
         Ok(ustack_top)
     }
     pub fn dealloc_ustack_by_pos(&mut self, ustack_base: usize, pos: usize) {
-
+        let ustack_top = ustack_bottom_by_pos(ustack_base, pos);
+        let ustack_bottom = ustack_top - USER_STACK_SIZE;
+        self.uvm_unmap(ustack_bottom, 4, false);
     }
 
     /// # 功能说明
@@ -619,6 +637,7 @@ impl PageTable {
                             unsafe {
                                 RawSinglePage::from_raw_and_drop(mem);
                             }
+                            kinfo!("remap");
                             self.uvm_dealloc(cur_size, old_size);
                             return Err(());
                         }
@@ -717,6 +736,21 @@ impl PageTable {
             pte.write_zero();
         }
     }
+    pub fn kvm_unmap(&mut self, va: usize, count: usize, freeing: bool) {
+        if va % PAGE_SIZE != 0 {
+            panic!("va not page aligned");
+        }
+
+        for i in (0..count).step_by(PAGE_SIZE) {
+            let pte = self
+                .find_pte_mut(unsafe { VirtAddr::from_raw(va + i * PAGE_SIZE) })
+                .expect("unable to find va available");
+
+            if freeing {
+            }
+            pte.write_zero();
+        }
+    }
 
     /// # 功能说明
     /// 将指定虚拟地址 `va` 对应的页表项标记为对用户态无效，  
@@ -795,17 +829,15 @@ impl PageTable {
     }
     pub fn uvm_copy_ustack(
         &mut self,
-        ppid: usize,
+        ustack_base: usize,
         child_pgt: &mut Self,
-        cpid: usize
     ) -> Result<(), ()> {
-        let c_ustack_bottom= ustack_bottom_from_pid(1);
-        let p_ustack_bottom = ustack_bottom_from_pid(1);
+        let ustack_bottom= ustack_bottom_by_pos(ustack_base, 1) - USER_STACK_SIZE;
         for offset in (0..USER_STACK_SIZE).step_by(PAGE_SIZE){
-            let cva = c_ustack_bottom.const_add(offset);
-            let pva = p_ustack_bottom.const_add(offset);
-            let cpte = child_pgt.find_pte_mut(cva.into()).expect("cpte not exist");
-            let ppte = self.find_pte(pva.into()).expect("ppte not exist");
+            let cva= unsafe { VirtAddr::from_raw(ustack_bottom + offset) };
+            let pva = unsafe { VirtAddr::from_raw(ustack_bottom + offset) };
+            let cpte = child_pgt.find_pte_create(cva).expect("cpte not exist");
+            let ppte = self.find_pte(pva).expect("ppte not exist");
             cpte.copy_from(ppte);
         }
         Ok(())
@@ -1033,6 +1065,6 @@ impl Drop for PageTable {
 }
 
 /// calucate the task user stack in the userspace
-fn ustack_bottom_by_pos(ustack_base: usize, pos: usize) -> usize {
-    ustack_base - pos * (PAGE_SIZE + USER_STACK_SIZE)
+pub fn ustack_bottom_by_pos(ustack_base: usize, pos: usize) -> usize {
+    ustack_base + (pos - 1) * (PAGE_SIZE + USER_STACK_SIZE) + PAGE_SIZE
 }
