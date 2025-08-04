@@ -9,7 +9,6 @@ use core::mem;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
 use crate::process::{PROC_MANAGER};
-use crate::process::task_manager;
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
 use crate::trap;
