@@ -87,4 +87,18 @@ def test_sleep_no_args():
     ]))
     r.match(no=["exec .* failed", "$ sleep\n$"])
 
+@test(10, "sleep, returns")
+def test_sleep_no_args():
+    r.run_qemu(shell_script([
+        'sleep_rust',
+        'echo OK'
+    ]))
+    r.match('^OK$', no=["exec .* failed", "$ sleep\n$"])
+
+def test_pingpong():
+    r.run_qemu(shell_script([
+        'pingpong_rust', 'echo OK'
+    ]))
+    r.match('^\\d+: received ping$', '^\\d+: received pong$', '^OK$')
+
 run_tests()
