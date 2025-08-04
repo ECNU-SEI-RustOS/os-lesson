@@ -5,11 +5,10 @@ use crate::consts::ConstAddr;
 use crate::process::CPU_MANAGER;
 use crate::consts::{TRAPFRAME,PAGE_SIZE,USER_STACK_SIZE};
 pub use addr::{Addr, PhysAddr, VirtAddr};
-pub use kvm::{kvm_init, kvm_init_hart, kvm_map, kvm_pa};
+pub use kvm::{kvm_init, kvm_init_hart, kvm_map, kvm_task_kstack_map,kvm_pa};
 pub use pagetable::{PageTable, PteFlag};
-pub use kalloc::{KernelHeap, KERNEL_HEAP};
 
-mod addr;
+pub mod addr;
 pub mod kalloc;
 mod kvm;
 pub mod pagetable;
