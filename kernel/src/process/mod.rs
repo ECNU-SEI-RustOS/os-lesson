@@ -14,6 +14,7 @@ use crate::mm::{
     kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
 };
 use crate::process::proc::pid::PID_ALLOCATOR;
+use crate::process::proc::ProcData;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
 use crate::process::proc::manager::ProcessFIFO;
@@ -24,8 +25,8 @@ pub use proc::Process;
 mod context;
 mod cpu;
 mod proc;
-mod trapframe;
-mod task;
+pub mod trapframe;
+pub mod task;
 
 use context::Context;
 use proc::ProcState;
@@ -84,7 +85,7 @@ pub struct ProcManager {
 
 lazy_static!{
     /// 可运行进程FIFO队列
-    pub static ref task_manager: SpinLock<ProcessFIFO> = SpinLock::new(ProcessFIFO::new(), "pid");
+    pub static ref PROCFIFO: SpinLock<ProcessFIFO> = SpinLock::new(ProcessFIFO::new(), "pid");
 }
 
 impl ProcManager {
@@ -315,7 +316,7 @@ impl ProcManager {
         process.user_init();
         let mut guard = process.excl.lock();
         guard.state = ProcState::RUNNABLE;
-        task_manager.lock().add(process as *const Process);
+        PROCFIFO.lock().add(process as *const Process);
     }
 
     /// 检查给定的进程是否是init
@@ -356,7 +357,7 @@ impl ProcManager {
             let mut guard = process.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
-                task_manager.lock().add(process as *const Process);
+                PROCFIFO.lock().add(process as *const Process);
             }
             drop(guard);
         }
@@ -466,6 +467,12 @@ impl ProcManager {
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
         exit_pexcl.state = ProcState::ZOMBIE;
+        let epdata= self.table[exit_index].data.get();
+        let pdata = unsafe {&mut *(epdata as *mut ProcData) };
+        while let Some(item) = pdata.tasks.pop(){
+            drop(item);
+        }
+
         PID_ALLOCATOR.lock().pid_dealloc(pid);
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
@@ -548,6 +555,7 @@ impl ProcManager {
                 parent_map[i].take();
                 self.table[i].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[i].data.get().as_mut().unwrap() };
+
                 child_data.cleanup(child_pid);
                 child_excl.cleanup();
                 return Ok(child_pid);
