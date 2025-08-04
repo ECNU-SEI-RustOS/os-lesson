@@ -96,7 +96,7 @@ pub fn init_page_allocator() {
     PAGE_ALLOCATOR.lock().init(start,end);
 }
 
-pub fn page_alloc() -> Option<PageTracker> {
+pub fn page_alloc() -> Option<PhysAddr> {
     let res = PAGE_ALLOCATOR.lock().alloc();
     if let None = res {
         panic!("[kernel] memory is not enough");
@@ -105,9 +105,10 @@ pub fn page_alloc() -> Option<PageTracker> {
     for i in ppn.get_bytes_array() {
         *i = 0;
     }
-    Some(PageTracker::new(res.unwrap().0.into()))
+    Some(ppn.into())
 }
 
-pub fn page_dealloc(ppn: PhysPageNum) {
+pub fn page_dealloc(pa: PhysAddr) {
+    let ppn = pa.into();
     PAGE_ALLOCATOR.lock().dealloc(ppn);
 }
