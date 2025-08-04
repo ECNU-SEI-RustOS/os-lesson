@@ -1,4 +1,4 @@
-KERNEL = target/riscv64gc-unknown-none-elf/debug/xv6-rust
+KERNEL = kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
 INCLUDE = include
 CPUS = 3
@@ -35,7 +35,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
 $(KERNEL):
-	cargo build
+	cd kernel && cargo build
 
 qemu: $(KERNEL) fs.img
 	$(QEMU) $(QEMUOPTS)
@@ -52,12 +52,13 @@ asm: $(KERNEL)
 
 clean:
 	rm -rf kernel.S
-	cargo clean
+	cd kernel && cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
 	mkfs/mkfs .gdbinit xv6.out \
 	$(USER)/usys.S \
-	$(UPROGS)
+	$(UPROGS) \
+	$(UPROGS_RUST)
 
 $(USER)/initcode: $(USER)/initcode.S
 	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Iinclude -c $(USER)/initcode.S -o $(USER)/initcode.o
@@ -94,7 +95,19 @@ print-gdbport:
 # that disk image changes after first build are persistent until clean.  More
 # details:
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
+TARGET_DIR_RUST := user_rust
+# 使用 wildcard 匹配文件
+USER_RUST_FILES := $(wildcard $(TARGET_DIR_RUST)/src/bin/*.rs)
+USER_RUST_PRO_BIN := $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(USER_RUST_FILES))
+UPROGS_RUST =  $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,user/_%,$(USER_RUST_FILES))
+
 .PRECIOUS: %.o
+
+user_rust_build:
+	cd user_rust && $(MAKE) build
+	$(foreach file,$(UPROGS_RUST),\
+		cp  $(patsubst user/_%,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(file)) $(file);  \
+	)
 
 UPROGS=\
 	$(USER)/_cat\
@@ -121,8 +134,8 @@ UPROGS=\
 
 UEXTRA = user/xargstest.sh
 
-fs.img: mkfs/mkfs README $(UPROGS) $(UEXTRA)
-	mkfs/mkfs fs.img README $(UPROGS) $(UEXTRA)
+fs.img: mkfs/mkfs README $(UPROGS) $(UEXTRA) user_rust_build
+	mkfs/mkfs fs.img README $(UPROGS) $(UEXTRA) $(UPROGS_RUST)
 
 -include user/*.d
 

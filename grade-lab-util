@@ -80,4 +80,11 @@ def test_xargs():
     assert_equal(len(matches), 3, "Number of appearances of 'hello'")
 
     
+@test(10, "sleep_rust, no arguments")
+def test_sleep_no_args():
+    r.run_qemu(shell_script([
+        'sleep_rust'
+    ]))
+    r.match(no=["exec .* failed", "$ sleep\n$"])
+
 run_tests()
