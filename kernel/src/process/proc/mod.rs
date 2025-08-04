@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::vec::{self, Vec};
 use array_macro::array;
 
 use alloc::boxed::Box;
@@ -8,8 +8,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
+use crate::consts::KERNEL_STACK_SIZE;
+use crate::process::proc::manager::{add_task, ProcessFIFO};
 use crate::process::task::task::Task;
-use crate::process::task_manager;
+use crate::process::PROCFIFO;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, RawPage, RawSinglePage};
 use crate::register::{satp, sepc, sstatus};
@@ -207,14 +209,31 @@ impl ProcData {
         trapframe.kernel_satp = satp::read();
         // current kernel stack's content is cleaned
         // after returning to the kernel space
-        trapframe.kernel_sp = self.kstack + PAGE_SIZE*4;
+        debug_assert_eq!(self.tasks.len(), 1);
+        trapframe.kernel_sp = &self.tasks[0].as_ref().unwrap().get_kstack_bottom() + KERNEL_STACK_SIZE;
+        trapframe.kernel_trap = user_trap as usize;
+        trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
+        // restore the user pc previously stored in sepc
+        sepc::write(trapframe.epc);
+
+        self.pagetable.as_ref().unwrap().as_satp()
+    }
+    pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
+        debug_assert_eq!(self.tasks.len(), 1);
+        let task = &self.tasks[0].as_ref().unwrap();
+        let trapframe: &mut TrapFrame = task.get_trap_frame();
+        trapframe.kernel_satp = satp::read();
+        // current kernel stack's content is cleaned
+        // after returning to the kernel space
+        
+        trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
         trapframe.kernel_trap = user_trap as usize;
         trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
 
         // restore the user pc previously stored in sepc
         sepc::write(trapframe.epc);
 
-        self.pagetable.as_ref().unwrap().as_satp()
+        (self.pagetable.as_ref().unwrap().as_satp(), task.tid)
     }
 
     /// 简单检查用户传入的虚拟地址是否在合法范围内。
@@ -449,12 +468,13 @@ impl Process {
 
         // map initcode in user pagetable
         pdata.pagetable.as_mut().unwrap().uvm_init(&INITCODE);
+        pdata.ustack_base = PAGE_SIZE;
         pdata.size = PAGE_SIZE;
 
         // prepare return pc and stack pointer
         let trapframe = unsafe { pdata.trapframe.as_mut().unwrap() };
         trapframe.epc = 0;
-        trapframe.sp = PAGE_SIZE;
+        trapframe.sp = PAGE_SIZE * 10;
 
         let init_name = b"initcode\0";
         unsafe {
@@ -467,6 +487,12 @@ impl Process {
 
         debug_assert!(pdata.cwd.is_none());
         pdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
+
+        let task = Task::new(Some(self as *mut Process), 1, PAGE_SIZE, 0);
+        let task = Arc::new(task);
+        self.data.get_mut().tasks.push(Some(Arc::clone(&task)));
+        //add_task(Arc::clone(&task));
+        
     }
 
     /// Abondon current process if
@@ -514,8 +540,8 @@ impl Process {
     /// - 系统调用执行过程中可能包含更底层的 `unsafe`，调用此函数时需确保整体安全环境。
     pub fn syscall(&mut self) {
         sstatus::intr_on();
-
-        let trapframe = unsafe { self.data.get_mut().trapframe.as_mut().unwrap() };
+        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
+        //let trapframe = unsafe { self.data.get_mut().trapframe.as_mut().unwrap() };
         let a7 = trapframe.a7;
         trapframe.admit_ecall();
         let sys_result = match a7 {
@@ -585,7 +611,7 @@ impl Process {
         let mut guard = self.excl.lock();
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
-        task_manager.lock().add(self as *const Process);
+        PROCFIFO.lock().add(self as *const Process);
         guard = unsafe { CPU_MANAGER.my_cpu_mut().sched(guard,
             self.data.get_mut().get_context()) };
         drop(guard);
@@ -690,7 +716,7 @@ impl Process {
         let mut cexcl = child.excl.lock();
         let cpid = cexcl.pid;
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
-
+        cdata.ustack_base = pdata.ustack_base;
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
         let size = pdata.size;
@@ -725,7 +751,12 @@ impl Process {
         let mut cexcl = child.excl.lock();
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
-        task_manager.lock().add(child as *const Process);
+        let task = Task::from(Some(child as *mut Process), 1, cdata.ustack_base, unsafe { pdata.tasks[0].as_ref().unwrap().get_trap_frame()});
+        let task = Arc::new(task);
+        cdata.tasks.push(Some(Arc::clone(&task)));
+        //add_task(task);
+        PROCFIFO.lock().add(child as *const Process);
+    
         Ok(cpid)
     }
 }
@@ -746,8 +777,9 @@ impl Process {
     ///
     /// # 返回值
     /// - 返回指定参数的原始寄存器值，类型为 usize。
-    fn arg_raw(&self, n: usize) -> usize {
-        let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
+    fn arg_raw(&mut self, n: usize) -> usize {
+        //let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
+        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
         match n {
             0 => {trapframe.a0}
             1 => {trapframe.a1}
@@ -762,7 +794,7 @@ impl Process {
     /// Fetch 32-bit register value.
     /// Note: `as` conversion is performed between usize and i32
     #[inline]
-    fn arg_i32(&self, n: usize) -> i32 {
+    fn arg_i32(&mut self, n: usize) -> i32 {
         self.arg_raw(n) as i32
     }
 
@@ -770,7 +802,7 @@ impl Process {
     /// Note: This raw address could be null,
     ///     and it might only be used to access user virtual address.
     #[inline]
-    fn arg_addr(&self, n: usize) -> usize {
+    fn arg_addr(&mut self, n: usize) -> usize {
         self.arg_raw(n)
     }
 
@@ -837,7 +869,7 @@ impl Process {
     /// - 使用了 `unsafe` 访问裸指针，假设页表和数据有效。
     /// - 复制操作仅读用户空间，不修改数据，安全性较高。
     /// - 需要保证缓冲区 `buf` 大小足够存放用户字符串。
-    fn arg_str(&self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
+    fn arg_str(&mut self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
         let addr: usize = self.arg_raw(n);
         let pagetable = unsafe { self.data.get().as_ref().unwrap().pagetable.as_ref().unwrap() };
         pagetable.copy_in_str(addr, buf)?;

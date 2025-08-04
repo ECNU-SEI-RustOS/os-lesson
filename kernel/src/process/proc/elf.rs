@@ -1,10 +1,13 @@
 //! ELF loader
-
+use alloc::{sync::Arc, task};
 use alloc::boxed::Box;
 use alloc::str;
 use core::{cmp::min, convert::TryFrom, mem::{self, MaybeUninit}};
 
-use crate::{consts::{MAXARG, MAXARGLEN, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
+use crate::process::proc::manager::add_task;
+use crate::process::PROCFIFO;
+use crate::{consts::MAX_TASKS_PER_PROC, mm::pagetable::ustack_bottom_by_pos, process::task::task::Task};
+use crate::{consts::{MAXARG, MAXARGLEN, MAXVA, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
 use crate::mm::{Address, PageTable, Addr, VirtAddr, pg_round_up};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 
@@ -91,16 +94,18 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     }
 
     let pid = process.excl.lock().pid;
+    let process_ptr = process as *mut Process;
     // allocate new pagetable, not assign to proc yet
     let pdata = process.data.get_mut();
     let mut pgt;
-    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize,pid) {
+    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, pid) {
         Some(res) => pgt = res,
         None => {
             drop(idata); drop(inode); LOG.end_op();
             return Err("mem not enough")
         },
     }
+
     let mut proc_size = 0usize;
 
     // load each program section
@@ -150,19 +155,23 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // allocate two page for user stack
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
-
+    // 准备最多64个线程空间（后续可以优化）
     pdata.set_ustack_base(proc_size);
+    let ustack_base = proc_size;
 
-    match pgt.uvm_alloc(proc_size, proc_size + USER_STACK_SIZE + PAGE_SIZE) {
+    match pgt.uvm_alloc(proc_size,  proc_size + MAX_TASKS_PER_PROC*(USER_STACK_SIZE + PAGE_SIZE)) {
         Ok(ret_size) => proc_size = ret_size,
         Err(_) => {
             pgt.dealloc_proc_pagetable(proc_size,pid);
             return Err("not enough uvm for user stack")
         },
     }
-    pgt.uvm_clear(proc_size - USER_STACK_SIZE - PAGE_SIZE);
-    let mut stack_pointer = proc_size;
-    let stack_base = stack_pointer - PAGE_SIZE;
+    for i in 1..=MAX_TASKS_PER_PROC {
+        pgt.uvm_clear(proc_size - i*(USER_STACK_SIZE + PAGE_SIZE));
+    }
+    let first_task_ustack_bottom: usize= ustack_bottom_by_pos(pdata.ustack_base, 1);
+    let mut stack_pointer = first_task_ustack_bottom + USER_STACK_SIZE;
+    let stack_base = first_task_ustack_bottom;
 
     // prepare command line content in the user stack
     let argc = argv.len();
@@ -205,13 +214,27 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     for i in 0..count {
         pdata.name[i] = path[i+off];
     }
+    // 清理task
+    while let Some(item) = pdata.tasks.pop() {
+        drop(item);
+    }
+
     let mut old_pgt = pdata.pagetable.replace(pgt).unwrap();
     let old_size = pdata.size;
     pdata.size = proc_size;
     trapframe.epc = elf.entry as usize;
     trapframe.sp = stack_pointer;
-    old_pgt.dealloc_proc_pagetable(old_size,pid);
     
+    let task = Task::new(Some(process_ptr), 1, ustack_base ,elf.entry as usize);
+    let task = Arc::new(task);
+    pdata.tasks.push(Some(Arc::clone(&task)));
+    
+    //add_task(Arc::clone(&task));
+    
+    // 清理旧的pagetable
+    old_pgt.dealloc_proc_pagetable(old_size,pid);
+    drop(old_pgt);
+
     Ok(argc)
 }
 
