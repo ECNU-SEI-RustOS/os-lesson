@@ -171,11 +171,12 @@ pub unsafe fn kvm_task_kstack_map(va: VirtAddr, pa: PhysAddr, tid : usize,size: 
     );
     let mut spin_lock_guard = kernel_table_lock.lock();
     if *spin_lock_guard <= tid {
+        kerror!("kstack map {:?}",va);
         if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
             panic!("kvm_map: {}", err);
         }
+        *spin_lock_guard.deref_mut() += 1;
     }
-    *spin_lock_guard.deref_mut() += 1;
     drop(spin_lock_guard);
 }
 /// # 功能说明
