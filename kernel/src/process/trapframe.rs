@@ -7,7 +7,7 @@
 /// 内核通过此结构体存储和恢复用户程序的执行现场，
 /// 保证用户程序能够正确继续执行。
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub struct TrapFrame {
     /// 内核页表的物理页目录基址 (SATP寄存器值)
     /*   0 */ pub kernel_satp: usize,   // kernel page table
