@@ -8,13 +8,9 @@ fmtname(char *path)
 {
   static char buf[DIRSIZ+1];
   char *p;
-
-  // Find first character after last slash.
   for(p=path+strlen(path); p >= path && *p != '/'; p--)
     ;
   p++;
-
-  // Return blank-padded name.
   if(strlen(p) >= DIRSIZ)
     return p;
   memmove(buf, p, strlen(p));
@@ -42,17 +38,7 @@ find(char *path, char *name)
   }
 
   switch(st.type) {
-    case T_FILE:
-      printf("FU!\n");
-      // if(strcmp(name, fmtname(path))){
-      //   printf("%s\n", *path);
-      // }
-    break;
     case T_DIR:
-      // if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
-      //   printf("find: path too long\n");
-      //   break;
-      // }
       strcpy(buf, path);
       p = buf+strlen(buf);
       *p++ = '/';
@@ -64,22 +50,15 @@ find(char *path, char *name)
         int fd_sub = open(buf,0);
         struct stat st_sub;
         fstat(fd_sub,&st_sub);
-        //printf("%s,%d\n",buf,st_sub.type);
-        //printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
         if(st_sub.type == T_FILE){
-          //printf("%s,%s\n",name, buf);
           if(!strcmp(name, fmtname(buf))){
             printf("%s\n", buf);
           }
         }
         else if(st_sub.type == T_DIR) {
-          // for(int i=0,j=strlen(buf);i<strlen(de.name);i++,j++){
-          //   buf[j] = de.name[i];
-          // }
           find(buf, name);
         }
         close(fd_sub);
-        //strcpy(buf, path);
       }
     break;
   }
@@ -89,7 +68,6 @@ find(char *path, char *name)
 int
 main(int argc, char *argv[])
 {
-  //printf("main:%s %s\n",argv[1],argv[2]);
   find(argv[1],argv[2]);
   exit(0);
 }
