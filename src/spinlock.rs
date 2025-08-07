@@ -8,6 +8,20 @@ use core::ptr::addr_of_mut;
 
 use crate::process::{CpuManager, pop_off, push_off};
 
+/// 表示一个自旋锁结构，用于在多核环境下保护共享数据。
+///
+/// `SpinLock` 提供了互斥访问内部数据的能力，通过忙等待（busy-waiting）实现锁机制。
+/// 当锁被占用时，尝试获取锁的CPU将在循环中等待，直到锁被释放。
+/// 该锁还跟踪持有锁的CPU ID，用于调试和死锁检测。
+///
+/// # 类型参数
+/// - `T`: 被保护的数据类型，可以是任意大小（`?Sized`）。
+///
+/// # 字段说明
+/// - `lock`: 原子布尔值，表示锁的状态（`false`=未锁定，`true`=已锁定）；
+/// - `name`: 锁的名称，用于调试和标识；
+/// - `cpuid`: 当前持有锁的CPU ID（-1表示无CPU持有）；
+/// - `data`: 被保护的数据，通过`UnsafeCell`实现内部可变性。
 #[derive(Debug)]
 pub struct SpinLock<T: ?Sized> {
     lock: AtomicBool,
