@@ -38,6 +38,8 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_setpri(&mut self) -> SysResult;
+    fn sys_getpri(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -495,6 +497,14 @@ impl Syscall for Proc {
         println!("[{}].close(fd={}), file={:?}", self.excl.lock().pid, fd, file);
 
         drop(file);
+        Ok(0)
+    }
+
+    fn sys_getpri(&mut self) -> SysResult {
+        Ok(0)
+    }
+
+    fn sys_setpri(&mut self) -> SysResult {
         Ok(0)
     }
 }
