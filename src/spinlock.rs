@@ -30,8 +30,9 @@ pub struct SpinLock<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 
+// 为SpinLock实现Sync trait，允许跨线程共享（要求T是Send）
 unsafe impl<T: ?Sized + Send> Sync for SpinLock<T> {}
-// This is not needed for xv6-rust's spinlock?, while this is implemented both in crate std and spin.
+// 这对于 xv6-rust 的自旋锁来说可能不需要？尽管这在 std 库和 spin 库中都有实现。
 // unsafe impl<T: ?Sized + Send> Send for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
