@@ -239,8 +239,18 @@ impl<'a, T: ?Sized> Drop for SpinLockGuard<'a, T> {
 }
 
 impl<'a, T> SpinLockGuard<'a, T> {
-    /// Test if the guard is held in the same CPU
-    /// Interrupts must be off
+    /// 检查当前CPU是否持有此锁。
+    ///
+    /// # 前提条件
+    /// - 中断必须已禁用；
+    ///
+    /// # 返回值
+    /// - `true`：当前CPU持有此锁；
+    /// - `false`：当前CPU未持有此锁。
+    ///
+    /// # 安全性
+    /// - 必须在禁用中断的上下文中调用；
+    /// - 守卫存在时通常应持有锁，此方法用于调试验证。
     pub unsafe fn holding(&self) -> bool {
         self.lock.holding()
     }
