@@ -111,9 +111,24 @@ impl<T: ?Sized> SpinLock<T> {
         }
     }
 
-    /// Check whether this cpu is holding the lock.
-    /// Interrupts must be off,
-    /// because it call cpu_id()
+    /// 检查当前CPU是否持有此锁（内部方法）。
+    ///
+    /// # 功能说明
+    /// 验证当前CPU是否持有该锁，用于调试和防止重入。
+    ///
+    /// # 前提条件
+    /// - 中断必须已禁用（由`push_off`保证）；
+    /// 
+    /// # 参数
+    /// 无
+    ///
+    /// # 返回值
+    /// - `true`：当前CPU持有此锁；
+    /// - `false`：当前CPU未持有此锁。
+    ///
+    /// # 安全性
+    /// - 必须在禁用中断的上下文中调用；
+    /// - 访问`cpuid`字段是安全的，因为中断已禁用。
     unsafe fn holding(&self) -> bool {
         self.lock.load(Ordering::Relaxed) && (self.cpuid.get() == CpuManager::cpu_id() as isize)
     }
