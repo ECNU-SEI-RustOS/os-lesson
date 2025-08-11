@@ -56,9 +56,20 @@ impl<T> SpinLock<T> {
         }
     }
 
-    /// Init the name of the [`SpinLock`].
-    /// Useful when the memory is allocated but not initialized.
-    /// SAFETY: This should be called when there is only one thread owns this [`SpinLock`].
+    /// 初始化自旋锁的名称字段。
+    ///
+    /// # 功能说明
+    /// 用于在内存已分配但未完全初始化的场景下设置锁名称。
+    /// 通常在`create`函数中配合`Arc::try_new_zeroed`使用。
+    ///
+    /// # 参数
+    /// - `lock`: 指向未初始化锁的原始指针；
+    /// - `name`: 要设置的锁名称。
+    ///
+    /// # 安全性
+    /// - 调用者必须确保此时只有一个线程可以访问该锁；
+    /// - 必须确保`lock`指向有效的内存地址；
+    /// - 此函数仅用于初始化阶段，正常创建锁应使用`new()`。
     #[inline(always)]
     pub unsafe fn init_name(lock: *mut Self, name: &'static str) {
         addr_of_mut!((*lock).name).write(name);
@@ -66,22 +77,32 @@ impl<T> SpinLock<T> {
 }
 
 impl<T: ?Sized> SpinLock<T> {
-    /// Locks the spinlock and returns a guard.
+    /// 获取自旋锁并返回一个守卫对象。
     ///
-    /// The returned guard can be deferenced for data access.
-    /// i.e., we implement Deref trait for the guard.
-    /// Also, the lock will also be dropped when the guard falls out of scope.
+    /// # 功能说明
+    /// 通过忙等待获取锁的所有权，返回一个守卫对象。
+    /// 守卫对象实现了`Deref`和`DerefMut`，允许直接访问被保护数据。
+    /// 当守卫对象离开作用域时，自动释放锁。
     ///
-    /// ```
-    /// let proc = SpinLock::new(0);
+    /// # 流程解释
+    /// 1. 调用`push_off()`禁用中断（防止死锁）；
+    /// 2. 检查是否已持有锁（防止重入）；
+    /// 3. 通过原子操作忙等待直到获取锁；
+    /// 4. 设置内存屏障确保操作顺序；
+    /// 5. 记录当前CPU ID；
+    /// 6. 返回守卫对象。
+    ///
+    /// # 示例
+    /// ```ignore
+    /// let lock = SpinLock::new(0, "test");
     /// {
-    ///     let mut proc_locked = proc.lock();
-    ///     // The lock is now locked and the data can be accessed
-    ///     *proc_locked = 1;
-    ///     // The lock is going to fall out of scope
-    ///     // i.e. the lock will be released
-    /// }
+    ///     let mut guard = lock.lock(); // 获取锁
+    ///     *guard = 42; // 修改受保护数据
+    /// } // 守卫离开作用域，自动释放锁
     /// ```
+    ///
+    /// # 返回值
+    /// 返回`SpinLockGuard<T>`守卫对象，提供对内部数据的访问。
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
         self.acquire();
         SpinLockGuard {
