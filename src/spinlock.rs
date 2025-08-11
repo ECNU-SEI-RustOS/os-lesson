@@ -36,6 +36,17 @@ unsafe impl<T: ?Sized + Send> Sync for SpinLock<T> {}
 // unsafe impl<T: ?Sized + Send> Send for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
+    /// 创建一个新的自旋锁实例。
+    ///
+    /// # 功能说明
+    /// 初始化自旋锁的所有字段，包括原子锁状态、名称、CPU ID和被保护数据。
+    ///
+    /// # 参数
+    /// - `data`: 需要被保护的数据；
+    /// - `name`: 锁的标识名称，用于调试。
+    ///
+    /// # 返回值
+    /// 返回初始化完成的 `SpinLock<T>` 实例。
     pub const fn new(data: T, name: &'static str) -> Self {
         Self {
             lock: AtomicBool::new(false),
