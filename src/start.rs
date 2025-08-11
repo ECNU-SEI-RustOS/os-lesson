@@ -104,31 +104,31 @@ pub unsafe fn start() -> ! {
 /// - 访问全局数组MSCRATCH0需unsafe
 /// - 直接操作硬件中断寄存器
 unsafe fn timerinit() {
-    // each CPU has a separate source of timer interrupts.
+    // 每个 CPU 都有一个独立的定时器中断源。
     let id = mhartid::read();
 
-    // ask the CLINT for a timer interrupt.
-    let interval: u64 = 1000000; // cycles; about 1/10th second in qemu.
+    // 向 CLINT 请求一个定时器中断。
+    let interval: u64 = 1000000; // 时钟周期；在 qemu 中大约0.1秒。
     clint::add_mtimecmp(id, interval);
 
-    // prepare information in scratch[] for timervec.
-    // scratch[0..3] : space for timervec to save registers.
-    // scratch[4] : address of CLINT MTIMECMP register.
-    // scratch[5] : desired interval (in cycles) between timer interrupts.
+    // 为 timervec 在 scratch [] 中准备信息。
+    // scratch [0..3]：供 timervec 保存寄存器的空间。
+    // scratch [4]：CLINT 的 MTIMECMP 寄存器的地址。
+    // scratch [5]：定时器中断之间的期望间隔（以时钟周期为单位）。
     let offset = 32 * id;
     MSCRATCH0[offset + 4] = 8 * id + Into::<usize>::into(CLINT_MTIMECMP);
     MSCRATCH0[offset + 5] = interval as usize;
     mscratch::write((MSCRATCH0.as_ptr() as usize) + offset * core::mem::size_of::<usize>());
 
-    // set the machine-mode trap handler.
+    // 设置机器模式的陷阱处理程序。
     extern "C" {
         fn timervec();
     }
     mtvec::write(timervec as usize);
 
-    // enable machine-mode interrupts.
+    // 启用机器模式中断。
     mstatus::set_mie();
 
-    // enable machine-mode timer interrupts.
+    // 启用机器模式定时器中断。
     mie::set_mtie();
 }
