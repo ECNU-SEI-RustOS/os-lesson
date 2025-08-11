@@ -1,5 +1,5 @@
-//! spinlock module
-//! A spinlock wraps data into itself to protect them
+//! 自旋锁模块
+//! 自旋锁将数据包裹在自身内部以保护这些数据。
 
 use core::cell::{Cell, UnsafeCell};
 use core::ops::{Deref, DerefMut, Drop};
