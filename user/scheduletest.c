@@ -10,7 +10,7 @@
 
 int main()
 {
-    setpri(0, 0);
-    getpri(0);
+    setpri(10);
+    printf("%d\n",getpri());
     exit(0);
 }

@@ -500,12 +500,20 @@ impl Syscall for Proc {
         Ok(0)
     }
 
-    fn sys_getpri(&mut self) -> SysResult {
+    fn sys_setpri(&mut self) -> SysResult {
+        let input_pri = self.arg_i32(0);
+        if input_pri < 0 || input_pri > 255{
+            println!("Priority: 0 - 255");
+        }
+        else {
+            self.excl.lock().priority = input_pri as usize;
+        }
         Ok(0)
     }
 
-    fn sys_setpri(&mut self) -> SysResult {
-        Ok(0)
+    fn sys_getpri(&mut self) -> SysResult {
+        let pri = self.excl.lock().priority;
+        Ok(pri)
     }
 }
 
