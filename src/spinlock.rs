@@ -155,6 +155,17 @@ impl<T: ?Sized> SpinLock<T> {
         unsafe { self.cpuid.set(CpuManager::cpu_id() as isize) };
     }
 
+    /// 释放锁的核心实现（内部方法）。
+    ///
+    /// # 流程解释
+    /// 1. 验证当前CPU确实持有锁；
+    /// 2. 清除CPU ID记录；
+    /// 3. 设置内存屏障确保操作顺序；
+    /// 4. 原子存储`false`释放锁；
+    /// 5. 调用`pop_off()`恢复中断状态。
+    ///
+    /// # 注意
+    /// 此方法不直接对外暴露，通过守卫的`Drop`实现自动调用。
     fn release(&self) {
         if unsafe { !self.holding() } {
             panic!("spinlock {} release", self.name);
