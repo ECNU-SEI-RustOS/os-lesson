@@ -508,6 +508,7 @@ impl Syscall for Proc {
         else {
             self.excl.lock().priority = input_pri as usize;
         }
+        self.yielding();
         Ok(0)
     }
 

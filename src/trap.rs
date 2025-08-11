@@ -59,7 +59,6 @@ pub unsafe extern fn user_trap() {
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
             }
-
             // acknowledge the software interrupt
             sip::clear_ssip();
 
