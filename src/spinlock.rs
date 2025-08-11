@@ -133,6 +133,17 @@ impl<T: ?Sized> SpinLock<T> {
         self.lock.load(Ordering::Relaxed) && (self.cpuid.get() == CpuManager::cpu_id() as isize)
     }
 
+    /// 获取锁的核心实现（内部方法）。
+    ///
+    /// # 流程解释
+    /// 1. 调用`push_off()`禁用中断；
+    /// 2. 检查是否已持有锁（防止死锁）；
+    /// 3. 使用原子比较交换（CAS）忙等待获取锁；
+    /// 4. 获取成功后设置内存屏障；
+    /// 5. 记录当前CPU ID。
+    ///
+    /// # 注意
+    /// 此方法不返回守卫对象，仅供内部使用。
     fn acquire(&self) {
         push_off();
         if unsafe { self.holding() } {
