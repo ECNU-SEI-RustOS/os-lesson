@@ -256,11 +256,17 @@ impl<'a, T> SpinLockGuard<'a, T> {
     }
 }
 
-/// Copy from crate spin(https://crates.io/crates/spin)
+/// 从spin crate借鉴 (https://crates.io/crates/spin)
 #[cfg(feature = "unit_test")]
 pub mod tests {
     use super::*;
 
+    /// 基础功能测试：验证锁的获取和释放。
+    ///
+    /// # 测试点
+    /// 1. 创建新锁；
+    /// 2. 连续两次获取锁（应成功，因在单线程上下文）；
+    /// 3. 自动释放机制验证。
     pub fn smoke() {
         let m = SpinLock::new((), "smoke");
         m.lock();
