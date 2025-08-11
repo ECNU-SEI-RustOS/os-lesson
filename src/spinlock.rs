@@ -176,12 +176,29 @@ impl<T: ?Sized> SpinLock<T> {
         pop_off();
     }
     
-    /// A hole for fork_ret() to release a proc's excl lock
+    /// 手动释放锁的特殊接口。
+    ///
+    /// # 功能说明
+    /// 提供一种不通过守卫对象释放锁的方式，用于特殊场景如`fork_ret()`。
+    /// 正常情况下应使用守卫模式自动管理锁生命周期。
+    ///
+    /// # 安全性
+    /// - 调用者必须确保当前CPU确实持有该锁；
+    /// - 释放后不得再访问受保护数据；
+    /// - 此方法仅用于特定内核路径（如进程创建）。
     pub unsafe fn unlock(&self) {
         self.release();
     }
 }
 
+/// 自旋锁守卫对象，提供对受保护数据的访问。
+///
+/// 当守卫对象存在时，表示锁已被持有。
+/// 守卫离开作用域时自动释放锁，确保锁的释放。
+///
+/// # 类型参数
+/// - `'a`: 守卫的生命周期，绑定到锁的生命周期；
+/// - `T`: 被保护数据的类型。
 pub struct SpinLockGuard<'a, T: ?Sized> {
     lock: &'a SpinLock<T>,
     data: &'a mut T,
@@ -189,20 +206,33 @@ pub struct SpinLockGuard<'a, T: ?Sized> {
 
 impl<'a, T: ?Sized> Deref for SpinLockGuard<'a, T> {
     type Target = T;
+
+    /// 解引用获取数据的不可变引用。
+    ///
+    /// # 安全性
+    /// 守卫存在时锁已被持有，因此访问是安全的。
     fn deref(&self) -> &T {
         &*self.data
     }
 }
 
 impl<'a, T: ?Sized> DerefMut for SpinLockGuard<'a, T> {
+
+    /// 解引用获取数据的可变引用。
+    ///
+    /// # 安全性
+    /// 守卫存在时锁已被持有，因此访问是安全的。
     fn deref_mut(&mut self) -> &mut T {
         &mut *self.data
     }
 }
 
 impl<'a, T: ?Sized> Drop for SpinLockGuard<'a, T> {
-    /// The dropping of the SpinLockGuard will call spinlock's release_lock(),
-    /// through its reference to its original spinlock.
+    /// 当守卫离开作用域时自动释放锁。
+    ///
+    /// # 流程解释
+    /// 调用关联自旋锁的`release()`方法释放锁，
+    /// 并恢复中断状态（通过`pop_off`）
     fn drop(&mut self) {
         self.lock.release();
     }
