@@ -100,7 +100,13 @@ impl<T: ?Sized> SleepLock<T> {
         }
     }
 
-    /// Called by its guard when dropped
+    /// 释放锁（内部方法，由守卫的Drop调用）
+    ///
+    /// # 流程解释
+    /// 1. 获取内部自旋锁
+    /// 2. 设置`locked=false`表示锁已释放
+    /// 3. 唤醒等待该锁的进程
+    /// 4. 释放内部自旋锁
     fn unlock(&self) {
         let guard = self.lock.lock();
         self.locked.set(false);
