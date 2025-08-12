@@ -1,4 +1,7 @@
-//! sleeplock
+//! 睡眠锁模块
+//!
+//! 提供基于进程休眠/唤醒机制的同步原语，适用于可能长时间持有的锁。
+//! 当锁被占用时，尝试获取锁的进程会进入休眠状态，避免忙等待。
 
 use core::ops::{Deref, DerefMut, Drop};
 use core::cell::{Cell, UnsafeCell};
