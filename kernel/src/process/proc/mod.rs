@@ -2,6 +2,7 @@ use array_macro::array;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use core::alloc::{GlobalAlloc, Layout};
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
@@ -9,9 +10,9 @@ use core::ptr;
 use core::cell::UnsafeCell;
 
 use crate::consts::{PGSIZE, fs::{NFILE, ROOTIPATH}};
-use crate::mm::{PageTable, RawPage, RawSinglePage};
+use crate::mm::{pg_round_down, PageTable, PhysAddr, PteFlag, RawPage, RawSinglePage, VirtAddr};
 use crate::process::trapframe::UsysPage;
-use crate::register::{satp, sepc, sstatus};
+use crate::register::{satp, sepc, sstatus, stval};
 use crate::spinlock::{SpinLock, SpinLockGuard};
 use crate::trap::user_trap;
 use crate::fs::{Inode, ICACHE, LOG, File};
@@ -401,7 +402,7 @@ impl ProcData {
         let old_size = self.sz;
         if increment > 0 {
             let new_size = old_size + (increment as usize);
-            self.pagetable.as_mut().unwrap().uvm_alloc(old_size, new_size)?;
+            // self.pagetable.as_mut().unwrap().uvm_alloc(old_size, new_size)?;
             self.sz = new_size;
         } else if increment < 0 {
             let new_size = old_size - ((-increment) as usize);
