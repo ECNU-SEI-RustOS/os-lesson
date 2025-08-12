@@ -5,7 +5,8 @@ use core::{alloc::Layout, num::Wrapping};
 use core::sync::atomic::Ordering;
 
 use crate::mm::{pg_round_down, PhysAddr, PteFlag, VirtAddr};
-use crate::{consts::{TRAMPOLINE, TRAPFRAME, UART0_IRQ, VIRTIO0_IRQ}, mm::KERNEL_HEAP, process::{Proc, PROC_MANAGER}};
+use crate::mm::{trapframe_from_pid, VirtAddr};
+use crate::{consts::{ConstAddr, PAGE_SIZE, TRAMPOLINE, TRAPFRAME, UART0_IRQ, USER_STACK_SIZE, VIRTIO0_IRQ}, mm::KERNEL_HEAP, process::{Process, PROC_MANAGER}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -33,7 +34,7 @@ pub unsafe extern fn user_trap() {
     extern "C" {fn kernelvec();}
     stvec::write(kernelvec as usize);
 
-    let p = CPU_MANAGER.my_proc();
+    let process = CPU_MANAGER.my_proc();
 
     let scause = Scause::read();
 
@@ -53,7 +54,7 @@ pub unsafe extern fn user_trap() {
                 plic::complete(irq);
             }
 
-            p.check_abondon(-1);
+            process.check_abondon(-1);
         }
         Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
@@ -80,8 +81,8 @@ pub unsafe extern fn user_trap() {
             sip::clear_ssip();
 
             // give up the cpu
-            p.check_abondon(-1);
-            p.yielding();
+            process.check_abondon(-1);
+            process.yielding();
         }
         Trap::Exception(scause::Exception::UserEnvCall)=> {
             p.check_abondon(-1);
@@ -105,13 +106,13 @@ pub unsafe extern fn user_trap() {
         _ => {
             println!("scause {:?}", scause.cause());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
-            p.abondon(-1);
+            process.abondon(-1);
         }
     }
 
     user_trap_ret();
 }
-
+use crate::process::task::task::trapframe_from_tid;
 /// Return to user space
 pub unsafe fn user_trap_ret() -> ! {
     // disable interrupts and prepare sret to user mode
@@ -121,13 +122,27 @@ pub unsafe fn user_trap_ret() -> ! {
     // send interrupts and exceptions to uservec/trampoline in trampoline.S
     stvec::write(TRAMPOLINE.into());
 
+    // let pf;
     // let the current process prepare for the sret
-    let satp = {
-        let pd = CPU_MANAGER.my_proc().data.get_mut();
-        pd.user_ret_prepare()
+    // let (satp,pid) = {
+    //     let pdata = CPU_MANAGER.my_proc().data.get_mut();
+    //     let pid = CPU_MANAGER.my_proc().excl.lock().pid;
+    //     let a =pdata.pagetable.as_ref().unwrap();
+    //     pf = a.find_pa_by_kernel(trapframe_from_pid(pid).into()).unwrap().into_raw();
+    //     (pdata.user_ret_prepare(), pid)
+    // };
+    let tf;
+    let (satp,tid) = {
+        let pdata = CPU_MANAGER.my_proc().data.get_mut();
+        let res = pdata.user_ret_prepare_task();
+        let a = pdata.pagetable.as_mut().unwrap();
+        
+        tf = a.find_pa_by_kernel(trapframe_from_tid(res.1).into()).unwrap().into_raw();
+        res
     };
-
-    // call userret with virtual address
+    // debug_assert_eq!((tf as *const TrapFrame).as_ref().unwrap(),(pf as *const TrapFrame).as_ref().unwrap());
+    // kinfo!("tf {:?}\npf {:?}", (tf as *const TrapFrame).as_ref().unwrap(),(pf as *const TrapFrame).as_ref().unwrap());
+    //call userret with virtual address
     extern "C" {
         fn trampoline();
         fn userret();
@@ -135,7 +150,7 @@ pub unsafe fn user_trap_ret() -> ! {
     let distance = userret as usize - trampoline as usize;
     let userret_virt: extern "C" fn(usize, usize) -> ! =
         core::mem::transmute(Into::<usize>::into(TRAMPOLINE) + distance);
-    userret_virt(TRAPFRAME.into(), satp);
+    userret_virt(trapframe_from_tid(tid).into(), satp);
 }
 
 /// Used to handle kernel space's trap
@@ -218,14 +233,14 @@ fn clock_intr() {
 }
 
 /// Sleep for a specified number of ticks.
-pub fn clock_sleep(p: &Proc, count: usize) -> Result<(), ()> {
+pub fn clock_sleep(process: &Process, count: usize) -> Result<(), ()> {
     let mut guard = TICKS.lock();
     let old_ticks = *guard;
     while (*guard - old_ticks) < Wrapping(count) {
-        if p.killed.load(Ordering::Relaxed) {
+        if process.killed.load(Ordering::Relaxed) {
             return Err(())
         }
-        p.sleep(&TICKS as *const _ as usize, guard);
+        process.sleep(&TICKS as *const _ as usize, guard);
         guard = TICKS.lock();
     }
     Ok(())
@@ -235,3 +250,4 @@ pub fn clock_sleep(p: &Proc, count: usize) -> Result<(), ()> {
 pub fn clock_read() -> usize {
     TICKS.lock().0
 }
+

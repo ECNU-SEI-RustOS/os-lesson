@@ -10,12 +10,12 @@ use core::mem;
 use crate::consts::PGSIZE;
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
 use crate::mm::VirtAddr;
-use crate::process::PROC_MANAGER;
+use crate::process::{PROC_MANAGER};
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
 use crate::trap;
 
-use super::{Proc, elf};
+use super::{Process, elf};
 
 pub type SysResult = Result<usize, ()>;
 
@@ -55,7 +55,7 @@ pub trait Syscall {
     fn sys_test(&mut self) -> SysResult;
 }
 
-impl Syscall for Proc {
+impl Syscall for Process {
     fn sys_test(&mut self) -> SysResult{
         kinfo!("{} {} ", self.arg_raw(0),self.arg_raw(1));
         Result::Ok(1)
@@ -227,6 +227,7 @@ impl Syscall for Proc {
         if result.is_err() {
             syscall_warning(error);
         }
+        //manager.lock().add(self as *const Process);
         result
     }
 

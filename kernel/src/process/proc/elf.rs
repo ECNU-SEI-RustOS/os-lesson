@@ -1,14 +1,17 @@
 //! ELF loader
-
+use alloc::{sync::Arc, task};
 use alloc::boxed::Box;
 use alloc::str;
 use core::{cmp::min, convert::TryFrom, mem::{self, MaybeUninit}};
 
-use crate::{consts::{MAXARGLEN, PGSIZE, MAXARG}, sleeplock::SleepLockGuard};
+use crate::process::proc::manager::add_task;
+use crate::process::PROCFIFO;
+use crate::{consts::MAX_TASKS_PER_PROC, mm::pagetable::ustack_bottom_by_pos, process::task::task::Task};
+use crate::{consts::{MAXARG, MAXARGLEN, MAXVA, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
 use crate::mm::{Address, PageTable, Addr, VirtAddr, pg_round_up};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 
-use super::Proc;
+use super::Process;
 
 /// 功能说明
 /// 该函数用于将指定路径（path）对应的 ELF 可执行文件加载到进程（Proc）的用户空间中，
@@ -60,7 +63,7 @@ use super::Proc;
 ///   调用时必须保证输入路径和 ELF 文件的完整正确性，否则可能引发未定义行为。
 /// - 新页表替换旧页表时保证旧资源释放，避免内存泄漏或悬挂指针。
 /// - 不允许中断或异步信号干扰该过程，确保加载一致性。
-pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
+pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
     // get relevant inode using path
     let inode: Inode;
     LOG.begin_op();
@@ -90,16 +93,19 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
         return Err("bad elf magic number")
     }
 
+    let pid = process.excl.lock().pid;
+    let process_ptr = process as *mut Process;
     // allocate new pagetable, not assign to proc yet
-    let pdata = p.data.get_mut();
+    let pdata = process.data.get_mut();
     let mut pgt;
-    match PageTable::alloc_proc_pagetable(pdata.tf as usize, pdata.up as usize) {
-        Some(p) => pgt = p,
+    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, pdata.up as usize, pid) {
+        Some(res) => pgt = res,
         None => {
             drop(idata); drop(inode); LOG.end_op();
             return Err("mem not enough")
         },
     }
+
     let mut proc_size = 0usize;
 
     // load each program section
@@ -108,7 +114,7 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
     for _ in 0..elf.phnum {
         let mut ph = MaybeUninit::<ProgHeader>::uninit();
         if idata.iread(Address::KernelMut(ph.as_mut_ptr() as *mut u8), off, ph_size).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size);
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             drop(pgt); drop(idata); drop(inode); LOG.end_op();
             return Err("cannot read elf program header")
         }
@@ -119,8 +125,8 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
             continue;
         }
 
-        if ph.memsz < ph.filesz || ph.vaddr + ph.memsz < ph.vaddr || ph.vaddr % (PGSIZE as u64) != 0 {
-            pgt.dealloc_proc_pagetable(proc_size);
+        if ph.memsz < ph.filesz || ph.vaddr + ph.memsz < ph.vaddr || ph.vaddr % (PAGE_SIZE as u64) != 0 {
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             drop(pgt); drop(idata); drop(inode); LOG.end_op();
             return Err("one program header meta not correct")
         }
@@ -128,14 +134,14 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
         match pgt.uvm_alloc(proc_size, (ph.vaddr + ph.memsz) as usize) {
             Ok(cur_size) => proc_size = cur_size,
             Err(_) => {
-                pgt.dealloc_proc_pagetable(proc_size);
+                pgt.dealloc_proc_pagetable(proc_size,pid);
                 drop(pgt); drop(idata); drop(inode); LOG.end_op();
                 return Err("not enough uvm for program header")
             }
         }
 
         if load_seg(pgt.as_mut(), ph.vaddr as usize, &mut idata, ph.off as u32, ph.filesz as u32).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size);
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             drop(pgt); drop(idata); drop(inode); LOG.end_op();
             return Err("load program section error")
         }
@@ -149,16 +155,23 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
     // allocate two page for user stack
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
-    match pgt.uvm_alloc(proc_size, proc_size + 2*PGSIZE) {
+    // 准备最多64个线程空间（后续可以优化）
+    pdata.set_ustack_base(proc_size);
+    let ustack_base = proc_size;
+
+    match pgt.uvm_alloc(proc_size,  proc_size + MAX_TASKS_PER_PROC*(USER_STACK_SIZE + PAGE_SIZE)) {
         Ok(ret_size) => proc_size = ret_size,
         Err(_) => {
-            pgt.dealloc_proc_pagetable(proc_size);
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             return Err("not enough uvm for user stack")
         },
     }
-    pgt.uvm_clear(proc_size - 2*PGSIZE);
-    let mut stack_pointer = proc_size;
-    let stack_base = stack_pointer - PGSIZE;
+    for i in 1..=MAX_TASKS_PER_PROC {
+        pgt.uvm_clear(proc_size - i*(USER_STACK_SIZE + PAGE_SIZE));
+    }
+    let first_task_ustack_bottom: usize= ustack_bottom_by_pos(pdata.ustack_base, 1);
+    let mut stack_pointer = first_task_ustack_bottom + USER_STACK_SIZE;
+    let stack_base = first_task_ustack_bottom;
 
     // prepare command line content in the user stack
     let argc = argv.len();
@@ -171,11 +184,11 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
         stack_pointer -= count;
         stack_pointer = align_sp(stack_pointer);
         if stack_pointer < stack_base {
-            pgt.dealloc_proc_pagetable(proc_size);
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             return Err("cmd args too much for stack")
         }
         if pgt.copy_out(arg_slice.as_ptr(), stack_pointer, count).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size);
+            pgt.dealloc_proc_pagetable(proc_size,pid);
             return Err("copy cmd args to pagetable go wrong")
         }
         ustack[i] = stack_pointer;
@@ -185,29 +198,43 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
     stack_pointer -= (argc+1) * mem::size_of::<usize>();
     stack_pointer = align_sp(stack_pointer);
     if stack_pointer < stack_base {
-        pgt.dealloc_proc_pagetable(proc_size);
+        pgt.dealloc_proc_pagetable(proc_size,pid);
         return Err("cmd args too much for stack")
     }
     if pgt.copy_out(ustack.as_ptr() as *const u8, stack_pointer, (argc+1)*mem::size_of::<usize>()).is_err() {
-        pgt.dealloc_proc_pagetable(proc_size);
+        pgt.dealloc_proc_pagetable(proc_size,pid);
         return Err("copy cmd args to pagetable go wrong")
     }
 
     // update the process's info
-    let tf = unsafe { pdata.tf.as_mut().unwrap() };
-    tf.a1 = stack_pointer;
+    let trapframe = unsafe { pdata.trapframe.as_mut().unwrap() };
+    trapframe.a1 = stack_pointer;
     let off = path.iter().position(|x| *x!=b'/').unwrap();
     let count = min(path.len()-off, pdata.name.len());
     for i in 0..count {
         pdata.name[i] = path[i+off];
     }
+    // 清理task
+    while let Some(item) = pdata.tasks.pop() {
+        drop(item);
+    }
+
     let mut old_pgt = pdata.pagetable.replace(pgt).unwrap();
-    let old_size = pdata.sz;
-    pdata.sz = proc_size;
-    tf.epc = elf.entry as usize;
-    tf.sp = stack_pointer;
-    old_pgt.dealloc_proc_pagetable(old_size);
+    let old_size = pdata.size;
+    pdata.size = proc_size;
+    trapframe.epc = elf.entry as usize;
+    trapframe.sp = stack_pointer;
     
+    let task = Task::new(Some(process_ptr), 1, ustack_base ,elf.entry as usize);
+    let task = Arc::new(task);
+    pdata.tasks.push(Some(Arc::clone(&task)));
+    
+    //add_task(Arc::clone(&task));
+    
+    // 清理旧的pagetable
+    old_pgt.dealloc_proc_pagetable(old_size,pid);
+    drop(old_pgt);
+
     Ok(argc)
 }
 
@@ -258,21 +285,21 @@ pub fn load(p: &mut Proc, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) ->
 fn load_seg(pgt: &mut PageTable, va: usize, idata: &mut SleepLockGuard<'_, InodeData>, offset: u32, size: u32)
     -> Result<(), ()>
 {
-    if va % PGSIZE != 0 {
+    if va % PAGE_SIZE != 0 {
         panic!("va={} is not page aligned", va);
     }
     let mut va = VirtAddr::try_from(va).unwrap();
 
-    for i in (0..size).step_by(PGSIZE) {
+    for i in (0..size).step_by(PAGE_SIZE) {
         let pa: usize;
-        match pgt.walk_addr_mut(va) {
+        match pgt.find_pa_mut(va) {
             Ok(phys_addr) => pa = phys_addr.into_raw(),
             Err(s) => panic!("va={} should already be mapped, {}", va.into_raw(), s),
         }
-        let count = if size - i < (PGSIZE as u32) {
+        let count = if size - i < (PAGE_SIZE as u32) {
             size - i
         } else {
-            PGSIZE as u32
+            PAGE_SIZE as u32
         };
         if idata.iread(Address::KernelMut(pa as *mut u8), offset+i, count).is_err() {
             return Err(())

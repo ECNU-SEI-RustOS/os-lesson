@@ -1,19 +1,19 @@
 use alloc::boxed::Box;
 use core::{alloc::AllocError, ptr};
 
-use crate::consts::PGSIZE;
+use crate::consts::ConstAddr;
 use crate::process::CPU_MANAGER;
-
+use crate::consts::{TRAPFRAME,PAGE_SIZE,USER_STACK_SIZE};
 pub use addr::{Addr, PhysAddr, VirtAddr};
-pub use kvm::{kvm_init, kvm_init_hart, kvm_map, kvm_pa};
+pub use kvm::{kvm_init, kvm_init_hart, kvm_map, kvm_task_kstack_map,kvm_pa};
 pub use pagetable::{PageTable, PteFlag};
-pub use kalloc::{KernelHeap, KERNEL_HEAP};
 
-mod addr;
+pub mod addr;
 pub mod kalloc;
 mod kvm;
-mod pagetable;
+pub mod pagetable;
 mod list;
+pub mod page_allocator;
 
 /// Used to alloc pages-sized and page-aligned memory.
 /// The impl typically using Box::new() and then Box::into_raw(). 
@@ -51,7 +51,7 @@ pub trait RawPage: Sized {
 /// Used to alloc single-page-sized and page-aligned memory.
 #[repr(C, align(4096))]
 pub struct RawSinglePage {
-    data: [u8; PGSIZE]
+    data: [u8; PAGE_SIZE]
 }
 
 impl RawPage for RawSinglePage {}
@@ -60,7 +60,7 @@ impl RawPage for RawSinglePage {}
 /// Similar to [`RawSinglePage`].
 #[repr(C, align(4096))]
 pub struct RawDoublePage {
-    data: [u8; PGSIZE*2]
+    data: [u8; PAGE_SIZE*2]
 }
 
 impl RawPage for RawDoublePage {}
@@ -69,7 +69,7 @@ impl RawPage for RawDoublePage {}
 /// Similar to [`RawSinglePage`].
 #[repr(C, align(4096))]
 pub struct RawQuadPage {
-    data: [u8; PGSIZE*4]
+    data: [u8; PAGE_SIZE*4]
 }
 
 impl RawPage for RawQuadPage {}
@@ -98,8 +98,8 @@ impl Address {
     pub fn copy_out(self, src: *const u8, count: usize) -> Result<(), ()> {
         match self {
             Self::Virtual(dst) => {
-                let p = unsafe { CPU_MANAGER.my_proc() };
-                p.data.get_mut().copy_out(src, dst, count)
+                let process = unsafe { CPU_MANAGER.my_proc() };
+                process.data.get_mut().copy_out(src, dst, count)
             },
             Self::Kernel(dst) => {
                 panic!("cannot copy to a const pointer {:p}", dst)
@@ -116,8 +116,8 @@ impl Address {
     pub fn copy_in(self, dst: *mut u8, count: usize) -> Result<(), ()> {
         match self {
             Self::Virtual(src) => {
-                let p = unsafe { CPU_MANAGER.my_proc() };
-                p.data.get_mut().copy_in(src, dst, count)
+                let process = unsafe { CPU_MANAGER.my_proc() };
+                process.data.get_mut().copy_in(src, dst, count)
             },
             Self::Kernel(src) => {
                 unsafe { ptr::copy(src, dst, count); }
@@ -134,10 +134,16 @@ impl Address {
 
 #[inline]
 pub fn pg_round_up(address: usize) -> usize {
-    (address + (PGSIZE - 1)) & !(PGSIZE - 1)
+    (address + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1)
 }
 
 #[inline]
 pub fn pg_round_down(address: usize) -> usize {
-    address & !(PGSIZE - 1)
+    address & !(PAGE_SIZE - 1)
+}
+
+#[inline]
+/// get the trapframe ptr in user space by pid
+pub fn trapframe_from_pid(pid: usize) -> ConstAddr {
+    TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE) + PAGE_SIZE)
 }

@@ -1,3 +1,4 @@
+use alloc::vec::{self, Vec};
 use array_macro::array;
 
 use alloc::boxed::Box;
@@ -8,8 +9,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
-
-use crate::consts::{PGSIZE, fs::{NFILE, ROOTIPATH}};
+use crate::consts::KERNEL_STACK_SIZE;
+use crate::process::proc::manager::{add_task, ProcessFIFO};
+use crate::process::task::task::Task;
+use crate::process::PROCFIFO;
+use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{pg_round_down, PageTable, PhysAddr, PteFlag, RawPage, RawSinglePage, VirtAddr};
 use crate::process::trapframe::UsysPage;
 use crate::register::{satp, sepc, sstatus, stval};
@@ -26,7 +30,8 @@ use self::syscall::Syscall;
 
 mod syscall;
 mod elf;
-mod task;
+pub mod pid;
+pub mod manager;
 
 /// 进程状态枚举类型，表示操作系统内核中进程的不同生命周期状态。
 ///
@@ -127,8 +132,10 @@ impl ProcAlarm {
 pub struct ProcData {
     /// 进程内核栈的起始虚拟地址。
     kstack: usize,
+    ///  用户栈起始基地址。
+    ustack_base: usize,
     /// 进程使用的内存大小（字节数）。
-    sz: usize,
+    size: usize,
     /// 进程上下文（寄存器状态等），用于上下文切换。
     context: Context,
     /// 进程名称，最长16字节，通常用于调试和显示。
@@ -136,7 +143,7 @@ pub struct ProcData {
     /// 进程打开的文件数组，元素为可选的引用计数智能指针。
     open_files: [Option<Arc<File>>; NFILE],
     /// 指向 TrapFrame 的裸指针，保存用户态寄存器临时值等信息。
-    pub tf: *mut TrapFrame,
+    pub trapframe: *mut TrapFrame,
     pub up: *mut UsysPage,
     /// 进程的用户页表，管理用户地址空间映射。
     pub pagetable: Option<Box<PageTable>>,
@@ -144,6 +151,8 @@ pub struct ProcData {
     pub cwd: Option<Inode>,
 
     pub tracemask: usize,
+    /// 当前进程中的线程
+    pub tasks: Vec<Option<Arc<Task>>>
 }
 
 
@@ -151,23 +160,35 @@ impl ProcData {
     const fn new() -> Self {
         Self {
             kstack: 0,
-            sz: 0,
+            ustack_base: 0,
+            size: 0,
             context: Context::new(),
             name: [0; 16],
             open_files: array![_ => None; NFILE],
-            tf: ptr::null_mut(),
+            trapframe: ptr::null_mut(),
             up: ptr::null_mut(),
             pagetable: None,
             cwd: None,
             tracemask: 0,
+            tasks: Vec::new()
         }
     }
-
+    /// 获取进程中的线程数量
+    pub fn thread_count(&self) -> usize {
+        self.tasks.len()
+    }
     /// Set kstack
     pub fn set_kstack(&mut self, kstack: usize) {
         self.kstack = kstack;
     }
-
+    /// Set ustack_base
+    pub fn set_ustack_base(&mut self, ustack_base: usize) {
+        self.ustack_base = ustack_base;
+    }
+    /// Set ustack_base
+    pub fn get_ustack_base(&self) -> usize {
+        self.ustack_base
+    }
     /// # 功能说明
     /// 初始化进程的上下文信息。该函数在进程创建后调用，
     /// 将进程上下文清零，并设置返回地址为 `fork_ret`，
@@ -188,7 +209,7 @@ impl ProcData {
     pub fn init_context(&mut self) {
         self.context.clear();
         self.context.set_ra(fork_ret as *const () as usize);
-        self.context.set_sp(self.kstack + PGSIZE*4);
+        self.context.set_sp(self.kstack + PAGE_SIZE*4);
     }
 
     /// Return the process's mutable reference of context
@@ -227,23 +248,40 @@ impl ProcData {
     /// - 调用者需确保在进程调度上下文中调用此函数，避免数据竞争。
     /// - 返回的 satp 值需用于低级上下文切换汇编代码，确保切换正确执行。
     pub fn user_ret_prepare(&mut self) -> usize {
-        let tf: &mut TrapFrame = unsafe { self.tf.as_mut().unwrap() };
-        tf.kernel_satp = satp::read();
+        let trapframe: &mut TrapFrame = unsafe { self.trapframe.as_mut().unwrap() };
+        trapframe.kernel_satp = satp::read();
         // current kernel stack's content is cleaned
         // after returning to the kernel space
-        tf.kernel_sp = self.kstack + PGSIZE*4;
-        tf.kernel_trap = user_trap as usize;
-        tf.kernel_hartid = unsafe { CpuManager::cpu_id() };
-
+        debug_assert_eq!(self.tasks.len(), 1);
+        trapframe.kernel_sp = &self.tasks[0].as_ref().unwrap().get_kstack_bottom() + KERNEL_STACK_SIZE;
+        trapframe.kernel_trap = user_trap as usize;
+        trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
         // restore the user pc previously stored in sepc
-        sepc::write(tf.epc);
+        sepc::write(trapframe.epc);
 
         self.pagetable.as_ref().unwrap().as_satp()
+    }
+    pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
+        debug_assert_eq!(self.tasks.len(), 1);
+        let task = &self.tasks[0].as_ref().unwrap();
+        let trapframe: &mut TrapFrame = task.get_trap_frame();
+        trapframe.kernel_satp = satp::read();
+        // current kernel stack's content is cleaned
+        // after returning to the kernel space
+        
+        trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
+        trapframe.kernel_trap = user_trap as usize;
+        trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
+
+        // restore the user pc previously stored in sepc
+        sepc::write(trapframe.epc);
+
+        (self.pagetable.as_ref().unwrap().as_satp(), task.tid)
     }
 
     /// 简单检查用户传入的虚拟地址是否在合法范围内。
     fn check_user_addr(&self, user_addr: usize) -> Result<(), ()> {
-        if user_addr > self.sz {
+        if user_addr > self.size {
             Err(())
         } else {
             Ok(())
@@ -315,10 +353,10 @@ impl ProcData {
     /// - 该函数包含不安全代码，依赖于 `tf` 指针的有效性和唯一所有权。
     /// - 调用者必须确保在进程数据被其他代码访问之前调用此函数，避免资源竞争。
     /// - 释放页表时必须保证当前进程内存映射处于可安全释放状态，避免悬挂指针。
-    pub fn cleanup(&mut self) {
+    pub fn cleanup(&mut self, pid: usize) {
         self.name[0] = 0;
-        let tf = self.tf;
-        self.tf = ptr::null_mut();
+        let tf = self.trapframe;
+        self.trapframe = ptr::null_mut();
         if !tf.is_null() {
             unsafe { RawSinglePage::from_raw_and_drop(tf as *mut u8); }
         }
@@ -329,9 +367,9 @@ impl ProcData {
         }
         let pgt = self.pagetable.take();
         if let Some(mut pgt) = pgt {
-            pgt.dealloc_proc_pagetable(self.sz);
+            pgt.dealloc_proc_pagetable(self.size, pid);
         }
-        self.sz = 0;
+        self.size = 0;
     }
 
     /// # 功能说明
@@ -399,15 +437,15 @@ impl ProcData {
     /// - 调用者需保证调整操作在进程内存空间允许的范围内，避免非法访问。
     /// - 函数内部无使用不安全代码，符合 Rust 内存安全原则。
     fn sbrk(&mut self, increment: i32) -> Result<usize, ()> {
-        let old_size = self.sz;
+        let old_size = self.size;
         if increment > 0 {
             let new_size = old_size + (increment as usize);
             // self.pagetable.as_mut().unwrap().uvm_alloc(old_size, new_size)?;
-            self.sz = new_size;
+            self.size = new_size;
         } else if increment < 0 {
             let new_size = old_size - ((-increment) as usize);
             self.pagetable.as_mut().unwrap().uvm_dealloc(old_size, new_size);
-            self.sz = new_size;
+            self.size = new_size;
         }
         Ok(old_size)
     }
@@ -421,7 +459,7 @@ impl ProcData {
 /// 以及进程是否被杀死的原子标志。
 ///
 /// 通过该结构体，操作系统能够管理进程调度、状态更新和资源访问的并发安全。
-pub struct Proc {
+pub struct Process {
     /// 进程在进程表中的索引，唯一标识该进程槽位。
     index: usize,
     /// 进程排它锁保护的状态信息，包括状态、pid、等待通道等。
@@ -433,7 +471,7 @@ pub struct Proc {
     pub alarm: UnsafeCell<ProcAlarm>,
 }
 
-impl Proc {
+impl Process {
     pub const fn new(index: usize) -> Self {
         Self {
             index,
@@ -476,28 +514,35 @@ impl Proc {
     ///   调用者需确保 `tf` 和 `name` 字段有效且可写。
     /// - 假定当前调用环境下独占访问 `ProcData`，避免数据竞争。
     pub fn user_init(&mut self) {
-        let pd = self.data.get_mut();
+        let pdata = self.data.get_mut();
 
         // map initcode in user pagetable
-        pd.pagetable.as_mut().unwrap().uvm_init(&INITCODE);
-        pd.sz = PGSIZE;
+        pdata.pagetable.as_mut().unwrap().uvm_init(&INITCODE);
+        pdata.ustack_base = PAGE_SIZE;
+        pdata.size = PAGE_SIZE;
 
         // prepare return pc and stack pointer
-        let tf = unsafe { pd.tf.as_mut().unwrap() };
-        tf.epc = 0;
-        tf.sp = PGSIZE;
+        let trapframe = unsafe { pdata.trapframe.as_mut().unwrap() };
+        trapframe.epc = 0;
+        trapframe.sp = PAGE_SIZE * 10;
 
         let init_name = b"initcode\0";
         unsafe {
             ptr::copy_nonoverlapping(
                 init_name.as_ptr(), 
-                pd.name.as_mut_ptr(),
+                pdata.name.as_mut_ptr(),
                 init_name.len()
             );
         }
 
-        debug_assert!(pd.cwd.is_none());
-        pd.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
+        debug_assert!(pdata.cwd.is_none());
+        pdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
+
+        let task = Task::new(Some(self as *mut Process), 1, PAGE_SIZE, 0);
+        let task = Arc::new(task);
+        self.data.get_mut().tasks.push(Some(Arc::clone(&task)));
+        //add_task(Arc::clone(&task));
+        
     }
 
     /// Abondon current process if
@@ -545,10 +590,10 @@ impl Proc {
     /// - 系统调用执行过程中可能包含更底层的 `unsafe`，调用此函数时需确保整体安全环境。
     pub fn syscall(&mut self) {
         sstatus::intr_on();
-
-        let tf = unsafe { self.data.get_mut().tf.as_mut().unwrap() };
-        let a7 = tf.a7;
-        tf.admit_ecall();
+        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
+        //let trapframe = unsafe { self.data.get_mut().trapframe.as_mut().unwrap() };
+        let a7 = trapframe.a7;
+        trapframe.admit_ecall();
         let sys_result = match a7 {
             1 => self.sys_fork(),
             2 => self.sys_exit(),
@@ -585,7 +630,7 @@ impl Proc {
             }
         };
         
-        tf.a0 = match sys_result {
+        trapframe.a0 = match sys_result {
             Ok(ret) => ret,
             Err(()) => -1isize as usize,
         };
@@ -631,6 +676,7 @@ impl Proc {
         let mut guard = self.excl.lock();
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
+        PROCFIFO.lock().add(self as *const Process);
         guard = unsafe { CPU_MANAGER.my_cpu_mut().sched(guard,
             self.data.get_mut().get_context()) };
         drop(guard);
@@ -734,27 +780,28 @@ impl Proc {
         let palarm = self.alarm.get_mut();
         let child = unsafe { PROC_MANAGER.alloc_proc().ok_or(())? };
         let mut cexcl = child.excl.lock();
+        let cpid = cexcl.pid;
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
         let calarm = unsafe { child.alarm.get().as_mut().unwrap() };
-
+        cdata.ustack_base = pdata.ustack_base;
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
-        let size = pdata.sz;
+        let size = pdata.size;
         if pdata.pagetable.as_mut().unwrap().uvm_copy(cpgt, size).is_err() {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
-            cdata.cleanup();
+            cdata.cleanup(cpid);
             calarm.cleanup();
             cexcl.cleanup();
             return Err(())
         }
-        cdata.sz = size;
+        cdata.size = size;
 
         // clone trapframe and return 0 on a0
         unsafe {
-            ptr::copy_nonoverlapping(pdata.tf, cdata.tf, 1);
+            ptr::copy_nonoverlapping(pdata.trapframe, cdata.trapframe, 1);
             ptr::copy_nonoverlapping(palarm.alarm_frame, calarm.alarm_frame, 1);
-            cdata.tf.as_mut().unwrap().a0 = 0;
+            cdata.trapframe.as_mut().unwrap().a0 = 0;
         }
 
         // clone opened files and cwd
@@ -774,12 +821,17 @@ impl Proc {
         let mut cexcl = child.excl.lock();
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
-
+        let task = Task::from(Some(child as *mut Process), 1, cdata.ustack_base, unsafe { pdata.tasks[0].as_ref().unwrap().get_trap_frame()});
+        let task = Arc::new(task);
+        cdata.tasks.push(Some(Arc::clone(&task)));
+        //add_task(task);
+        PROCFIFO.lock().add(child as *const Process);
+    
         Ok(cpid)
     }
 }
 
-impl Proc {
+impl Process {
     /// # 功能说明
     /// 从当前进程的 TrapFrame 中获取第 `n` 个系统调用参数的原始值（usize 类型）。
     /// 系统调用参数通过寄存器 a0~a5 传递，`n` 指定参数索引（0 到 5）。
@@ -795,15 +847,16 @@ impl Proc {
     ///
     /// # 返回值
     /// - 返回指定参数的原始寄存器值，类型为 usize。
-    fn arg_raw(&self, n: usize) -> usize {
-        let tf = unsafe { self.data.get().as_ref().unwrap().tf.as_ref().unwrap() };
+    fn arg_raw(&mut self, n: usize) -> usize {
+        //let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
+        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
         match n {
-            0 => {tf.a0}
-            1 => {tf.a1}
-            2 => {tf.a2}
-            3 => {tf.a3}
-            4 => {tf.a4}
-            5 => {tf.a5}
+            0 => {trapframe.a0}
+            1 => {trapframe.a1}
+            2 => {trapframe.a2}
+            3 => {trapframe.a3}
+            4 => {trapframe.a4}
+            5 => {trapframe.a5}
             _ => { panic!("n is larger than 5") }
         }
     }
@@ -811,7 +864,7 @@ impl Proc {
     /// Fetch 32-bit register value.
     /// Note: `as` conversion is performed between usize and i32
     #[inline]
-    fn arg_i32(&self, n: usize) -> i32 {
+    fn arg_i32(&mut self, n: usize) -> i32 {
         self.arg_raw(n) as i32
     }
 
@@ -819,7 +872,7 @@ impl Proc {
     /// Note: This raw address could be null,
     ///     and it might only be used to access user virtual address.
     #[inline]
-    fn arg_addr(&self, n: usize) -> usize {
+    fn arg_addr(&mut self, n: usize) -> usize {
         self.arg_raw(n)
     }
 
@@ -886,7 +939,7 @@ impl Proc {
     /// - 使用了 `unsafe` 访问裸指针，假设页表和数据有效。
     /// - 复制操作仅读用户空间，不修改数据，安全性较高。
     /// - 需要保证缓冲区 `buf` 大小足够存放用户字符串。
-    fn arg_str(&self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
+    fn arg_str(&mut self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
         let addr: usize = self.arg_raw(n);
         let pagetable = unsafe { self.data.get().as_ref().unwrap().pagetable.as_ref().unwrap() };
         pagetable.copy_in_str(addr, buf)?;
@@ -923,7 +976,7 @@ impl Proc {
     /// - 调用者需保证地址合法且缓冲区足够存储数据。
     fn fetch_addr(&self, addr: usize) -> Result<usize, &'static str> {
         let pd = unsafe { self.data.get().as_ref().unwrap() };
-        if addr + mem::size_of::<usize>() > pd.sz {
+        if addr + mem::size_of::<usize>() > pd.size {
             Err("input addr > proc's mem size")
         } else {
             let mut ret: usize = 0;

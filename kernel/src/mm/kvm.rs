@@ -1,12 +1,13 @@
 use core::arch::asm;
 use core::convert::{TryFrom, Into};
 use core::mem;
+use core::ops::DerefMut;
 
 use crate::consts::{
-    CLINT, CLINT_MAP_SIZE, KERNBASE, PHYSTOP, PLIC, PLIC_MAP_SIZE, UART0, UART0_MAP_SIZE, VIRTIO0,
-    VIRTIO0_MAP_SIZE, TRAMPOLINE, PGSIZE
+    CLINT, CLINT_MAP_SIZE, KERNBASE, KERNEL_HEAP_END, PAGE_SIZE, PHYSTOP, PLIC, PLIC_MAP_SIZE, TRAMPOLINE, UART0, UART0_MAP_SIZE, VIRTIO0, VIRTIO0_MAP_SIZE
 };
 use crate::register::satp;
+use crate::spinlock::SpinLock;
 use super::{Addr, PageTable, PhysAddr, PteFlag, VirtAddr, RawSinglePage, RawDoublePage, RawQuadPage};
 
 /// 内核页表（Kernel Page Table）
@@ -57,14 +58,14 @@ pub unsafe fn kvm_init_hart() {
 /// - 适用于内核启动初始化阶段，且不应在多核并发环境下随意调用。
 pub unsafe fn kvm_init() {
     // check if RawPages and PageTable have the same mem layout
-    debug_assert_eq!(mem::size_of::<RawSinglePage>(), PGSIZE);
-    debug_assert_eq!(mem::align_of::<RawSinglePage>(), PGSIZE);
+    debug_assert_eq!(mem::size_of::<RawSinglePage>(), PAGE_SIZE);
+    debug_assert_eq!(mem::align_of::<RawSinglePage>(), PAGE_SIZE);
     debug_assert_eq!(mem::size_of::<RawSinglePage>(), mem::size_of::<PageTable>());
     debug_assert_eq!(mem::align_of::<RawSinglePage>(), mem::align_of::<PageTable>());
-    debug_assert_eq!(mem::size_of::<RawDoublePage>(), PGSIZE*2);
-    debug_assert_eq!(mem::align_of::<RawDoublePage>(), PGSIZE);
-    debug_assert_eq!(mem::size_of::<RawQuadPage>(), PGSIZE*4);
-    debug_assert_eq!(mem::align_of::<RawQuadPage>(), PGSIZE);
+    debug_assert_eq!(mem::size_of::<RawDoublePage>(), PAGE_SIZE*2);
+    debug_assert_eq!(mem::align_of::<RawDoublePage>(), PAGE_SIZE);
+    debug_assert_eq!(mem::size_of::<RawQuadPage>(), PAGE_SIZE*4);
+    debug_assert_eq!(mem::align_of::<RawQuadPage>(), PAGE_SIZE);
 
     // uart registers
     kvm_map(
@@ -117,7 +118,14 @@ pub unsafe fn kvm_init() {
     kvm_map(
         VirtAddr::try_from(etext).unwrap(),
         PhysAddr::try_from(etext).unwrap(),
-        usize::from(PHYSTOP) - etext,
+        usize::from(KERNEL_HEAP_END) - etext,
+        PteFlag::R | PteFlag::W,
+    );
+
+    kvm_map(
+        VirtAddr::from(KERNEL_HEAP_END),
+        PhysAddr::from(KERNEL_HEAP_END),
+        usize::from(PHYSTOP) - usize::from(KERNEL_HEAP_END),
         PteFlag::R | PteFlag::W,
     );
 
@@ -129,11 +137,12 @@ pub unsafe fn kvm_init() {
     kvm_map(
         VirtAddr::from(TRAMPOLINE),
         PhysAddr::try_from(trampoline as usize).unwrap(),
-        PGSIZE,
+        PAGE_SIZE,
         PteFlag::R | PteFlag::X
     );
 }
 
+static mut kernel_table_lock:SpinLock<usize> = SpinLock::new(0, "lock");
 /// 在内核全局页表 `KERNEL_PAGE_TABLE` 上建立虚拟地址到物理地址的映射。  
 /// 映射从虚拟地址 `va` 开始，长度为 `size` 字节，权限由 `perm` 指定。  
 /// 该函数负责调用底层页表映射方法，添加连续页的映射关系。
@@ -145,12 +154,31 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
         pa.as_usize(),
         size
     );
-
+    let spin_lock_guard = kernel_table_lock.lock();
     if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
         panic!("kvm_map: {}", err);
     }
+    drop(spin_lock_guard);
 }
 
+pub unsafe fn kvm_task_kstack_map(va: VirtAddr, pa: PhysAddr, tid : usize,size: usize, perm: PteFlag) {
+    #[cfg(feature = "verbose_init_info")]
+    println!(
+        "kvm_map: va={:#x}, pa={:#x}, size={:#x}",
+        va.as_usize(),
+        pa.as_usize(),
+        size
+    );
+    let mut spin_lock_guard = kernel_table_lock.lock();
+    if *spin_lock_guard <= tid {
+        kerror!("kstack map {:?}",va);
+        if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
+            panic!("kvm_map: {}", err);
+        }
+        *spin_lock_guard.deref_mut() += 1;
+    }
+    drop(spin_lock_guard);
+}
 /// # 功能说明
 /// 将内核虚拟地址 `va` 转换为对应的物理地址。  
 /// 该函数通过页表查找 `va` 对应的页表项，验证其有效性，  
@@ -171,8 +199,8 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
 /// - 直接访问全局可变页表，可能导致数据竞争或非法访问，需在合适的环境下调用。  
 /// - panic 会导致内核异常中断，应在调用前确保虚拟地址安全。
 pub unsafe fn kvm_pa(va: VirtAddr) -> u64 {
-    let off: u64 = (va.as_usize() % PGSIZE) as u64;
-    match KERNEL_PAGE_TABLE.walk(va) {
+    let off: u64 = (va.as_usize() % PAGE_SIZE) as u64;
+    match KERNEL_PAGE_TABLE.find_pte(va) {
         Some(pte) => {
             if !pte.is_valid() {
                 panic!("kvm_pa: va={:?} mapped pa not valid", va);
