@@ -55,7 +55,24 @@ impl<T> SleepLock<T> {
 }
 
 impl<T: ?Sized> SleepLock<T> {
-    /// blocking, might sleep if this sleeplock is already locked
+    /// 获取睡眠锁（可能阻塞进程）
+    ///
+    /// # 功能说明
+    /// 尝试获取睡眠锁。如果锁已被占用，当前进程将进入休眠状态，
+    /// 直到锁被释放后被唤醒。返回守卫对象提供对数据的访问。
+    ///
+    /// # 流程解释
+    /// 1. 获取内部自旋锁保护临界区
+    /// 2. 检查`locked`状态：
+    ///   - 如果已锁定：调用`sleep()`让当前进程休眠
+    ///   - 如果未锁定：设置`locked=true`并返回守卫
+    /// 3. 释放内部自旋锁（因已设置locked状态）
+    ///
+    /// # 返回值
+    /// `SleepLockGuard<T>`守卫对象，提供对内部数据的访问
+    ///
+    /// # 安全性
+    /// - 使用`UnsafeCell`获取数据指针，但通过守卫模式保证安全访问
     pub fn lock(&self) -> SleepLockGuard<'_, T> {
         let mut guard = self.lock.lock();
         while self.locked.get() {
