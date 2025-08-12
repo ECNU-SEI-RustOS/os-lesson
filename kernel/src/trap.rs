@@ -74,7 +74,6 @@ pub unsafe extern fn user_trap() {
                     pa.handler_called = true;
                 }
             }
-
             // acknowledge the software interrupt
             sip::clear_ssip();
 

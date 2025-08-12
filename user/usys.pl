@@ -36,6 +36,7 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
-entry("sigalarm");
+entry("setpri");
+entry("getpri");entry("sigalarm");
 entry("sigreturn");entry("pgaccess");entry("trace");
 entry("sysinfo");

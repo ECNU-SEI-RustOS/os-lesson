@@ -61,6 +61,8 @@ pub struct ProcExcl {
     pub channel: usize,
     /// 进程的唯一标识符（进程ID）。
     pub pid: usize,
+    /// 进程优先级
+    pub priority: usize,
 }
 
 
@@ -71,11 +73,13 @@ impl ProcExcl {
             exit_status: 0,
             channel: 0,
             pid: 0,
+            priority: 0,
         }
     }
 
     /// Clean up the content in [`ProcExcl`],
     pub fn cleanup(&mut self) {
+        self.priority = 0;
         self.pid = 0;
         self.channel = 0;
         self.exit_status = 0;
@@ -566,6 +570,8 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+            22 => self.sys_setpri(),
+            23 => self.sys_getpri(),
             22 => self.sys_trace(),
             22 => self.sys_pgaccess(),
             22 => self.sys_sigalarm(),

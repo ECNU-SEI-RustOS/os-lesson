@@ -2,7 +2,7 @@ KERNEL = kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
 USER_C_TARGET = $(USER)/target
 INCLUDE = include
-CPUS = 3
+CPUS = 1
 
 CC = riscv64-unknown-elf-gcc
 LD = riscv64-unknown-elf-ld

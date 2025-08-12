@@ -224,6 +224,7 @@ impl ProcManager {
                     }
                     pd.init_context();
                     guard.pid = new_pid;
+                    guard.priority = 255;
                     guard.state = ProcState::ALLOCATED;
 
                     drop(guard);
@@ -262,22 +263,63 @@ impl ProcManager {
     /// - 通过持有进程的 `excl` 自旋锁保证状态修改的原子性，避免竞态条件。
     /// - 返回时释放了锁，调用者需确保使用该进程指针时的并发安全。
     fn alloc_runnable(&mut self) -> Option<&mut Proc> {
-        for p in self.table.iter_mut() {
-            let mut guard = p.excl.lock();
-            match guard.state {
-                ProcState::RUNNABLE => {
-                    guard.state = ProcState::ALLOCATED;
-                    drop(guard);
-                    return Some(p);
-                }
-                _ => {
-                    drop(guard);
+        // Phase 1：只读扫描，找出 priority 最大的 RUNNABLE
+        let mut best_idx: Option<usize> = None;
+        let mut best_prio: usize = 0; // 数值越大优先级越高
+
+        for (i, p) in self.table.iter().enumerate() { // 注意 iter()，非 iter_mut()
+            let guard = p.excl.lock();
+            if matches!(guard.state, ProcState::RUNNABLE) {
+                let prio = guard.priority; // p.excl.priority
+                match best_idx {
+                    None => {
+                        best_idx = Some(i);
+                        best_prio = prio;
+                    }
+                    Some(j) => {
+                        if prio > best_prio || (prio == best_prio && i < j) {
+                            best_idx = Some(i);
+                            best_prio = prio;
+                        }
+                    }
                 }
             }
+            // guard 在此作用域结束自动释放
         }
-
-        None
+        let idx = best_idx?;
+        // Phase 2：二次加锁占用（RUNNABLE→ALLOCATED）
+        let p = &mut self.table[idx];
+        let mut guard = p.excl.lock();
+        if matches!(guard.state, ProcState::RUNNABLE) {
+            guard.state = ProcState::ALLOCATED;
+            drop(guard);
+            return Some(p);
+        }
+        else {
+            drop(guard);
+            None
+        }
     }
+
+    // fn alloc_runnable(&mut self) ->
+    //     Option<&mut Proc>
+    // {
+    //     for p in self.table.iter_mut() {
+    //         let mut guard = p.excl.lock();
+    //         match guard.state {
+    //             ProcState::RUNNABLE => {
+    //                 guard.state = ProcState::ALLOCATED;
+    //                 drop(guard);
+    //                 return Some(p)
+    //             },
+    //             _ => {
+    //                 drop(guard);
+    //             },
+    //         }
+    //     }
+
+    //     None
+    // }
 
     /// # 功能说明
     ///
