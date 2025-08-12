@@ -114,6 +114,9 @@ impl<T: ?Sized> SleepLock<T> {
         drop(guard);
     }
 
+    /// 唤醒等待该锁的进程（内部方法）
+    ///
+    /// 通过进程管理器唤醒所有在`locked`地址上休眠的进程
     fn wakeup(&self) {
         unsafe {
             PROC_MANAGER.wakeup(self.locked.as_ptr() as usize);
@@ -121,6 +124,14 @@ impl<T: ?Sized> SleepLock<T> {
     }
 }
 
+/// 睡眠锁守卫，提供对受保护数据的访问
+///
+/// 当守卫存在时，表示锁已被持有。
+/// 守卫离开作用域时自动释放锁，确保锁的释放。
+///
+/// # 类型参数
+/// - `'a`: 守卫的生命周期，绑定到锁的生命周期
+/// - `T`: 被保护数据的类型
 pub struct SleepLockGuard<'a, T: ?Sized> {
     lock: &'a SleepLock<T>,
     data: &'a mut T,
@@ -128,20 +139,25 @@ pub struct SleepLockGuard<'a, T: ?Sized> {
 
 impl<'a, T: ?Sized> Deref for SleepLockGuard<'a, T> {
     type Target = T;
+    /// 解引用获取数据的不可变引用
     fn deref(&self) -> &T {
         &*self.data
     }
 }
 
 impl<'a, T: ?Sized> DerefMut for SleepLockGuard<'a, T> {
+    /// 解引用获取数据的可变引用
     fn deref_mut(&mut self) -> &mut T {
         &mut *self.data
     }
 }
 
 impl<'a, T: ?Sized> Drop for SleepLockGuard<'a, T> {
-    /// The dropping of the SpinLockGuard will call spinlock's release_lock(),
-    /// through its reference to its original spinlock.
+    /// 当守卫离开作用域时自动释放锁
+    ///
+    /// 通过调用关联睡眠锁的`unlock()`方法实现：
+    /// 1. 标记锁为可用状态
+    /// 2. 唤醒等待该锁的进程
     fn drop(&mut self) {
         self.lock.unlock();
     }
