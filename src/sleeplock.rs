@@ -74,15 +74,26 @@ impl<T: ?Sized> SleepLock<T> {
     /// # 安全性
     /// - 使用`UnsafeCell`获取数据指针，但通过守卫模式保证安全访问
     pub fn lock(&self) -> SleepLockGuard<'_, T> {
+        // 获取内部自旋锁（保护locked状态）
         let mut guard = self.lock.lock();
+
+        // 当锁已被占用时循环等待
         while self.locked.get() {
             unsafe {
+                // 让当前进程休眠，等待锁释放
                 CPU_MANAGER.my_proc().sleep(self.locked.as_ptr() as usize, guard);
             }
+            // 被唤醒后重新获取内部锁
             guard = self.lock.lock();
         }
+
+        // 成功获取锁，设置状态
         self.locked.set(true);
+
+        // 释放内部自旋锁（已设置locked状态，无需保护）
         drop(guard);
+
+        // 返回守卫对象
         SleepLockGuard {
             lock: &self,
             data: unsafe { &mut *self.data.get() }
