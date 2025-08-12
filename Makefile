@@ -1,4 +1,4 @@
-KERNEL = kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
+KERNEL = kernel/kernel/target/riscv64gc-unknown-none-elf/debug/xv6-rust
 USER = user
 USER_C_TARGET = $(USER)/target
 INCLUDE = include
@@ -38,7 +38,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
 
 $(KERNEL): $(RUST_SRCS)
-	cargo build
+	cd kernel && cargo build
 
 qemu: $(KERNEL) fs.img
 	$(QEMU) $(QEMUOPTS)
@@ -58,12 +58,13 @@ asm: $(KERNEL)
 
 clean:
 	rm -rf kernel.S
-	cd kernel && cargo clean
+	cd kernel && cd kernel && cargo clean
 	rm -f $(USER)/*.o $(USER)/*.d $(USER)/*.asm $(USER)/*.sym \
 	$(USER)/initcode $(USER)/initcode.out fs.img \
 	mkfs/mkfs .gdbinit xv6.out \
 	$(USER)/usys.S \
 	$(UPROGS) \
+	$(UPROGS_RUST) \
 	$(UPROGS_RUST)
 
 # $(USER)/initcode: $(USER)/initcode.S
@@ -114,6 +115,12 @@ TARGET_DIR_RUST := user_rust
 USER_RUST_FILES := $(wildcard $(TARGET_DIR_RUST)/src/bin/*.rs)
 USER_RUST_PRO_BIN := $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(USER_RUST_FILES))
 UPROGS_RUST =  $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,user/_%,$(USER_RUST_FILES))
+TARGET_DIR_RUST := user_rust
+# 使用 wildcard 匹配文件
+USER_RUST_FILES := $(wildcard $(TARGET_DIR_RUST)/src/bin/*.rs)
+USER_RUST_PRO_BIN := $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,$(TARGET_DIR_RUST)/target/riscv64gc-unknown-none-elf/release/%,$(USER_RUST_FILES))
+UPROGS_RUST =  $(patsubst $(TARGET_DIR_RUST)/src/bin/%.rs,user/_%,$(USER_RUST_FILES))
+
 .PRECIOUS: %.o
 
 user_rust_build:
@@ -125,8 +132,8 @@ user_rust_build:
 	$(USER)/_bttest\
 	$(USER)/_alarmtest\
 
-fs.img: mkfs/mkfs README $(UPROGS) user_rust_build
-	mkfs/mkfs fs.img README $(UPROGS) $(UPROGS_RUST)
+fs.img: mkfs/mkfs README $(UPROGS) user_rust_build $(UEXTRA) user_rust_build
+	mkfs/mkfs fs.img README $(UPROGS) $(UEXTRA) $(UPROGS_RUST) $(UPROGS_RUST)
 show:
 	@echo $(UPROGS_RUST)
 -include user/*.d
