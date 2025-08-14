@@ -41,13 +41,24 @@ pub trait Syscall {
     fn sys_close(&mut self) -> SysResult;
     fn sys_getmtime(&mut self) -> SysResult;
     fn sys_waitpid(&mut self) -> SysResult;
-    fn sys_test(&mut self) -> SysResult;
+    fn sys_thread_create(&mut self) -> SysResult;
+    fn sys_thread_count(&mut self) -> SysResult;
+    fn sys_thread_waittid(&mut self) -> SysResult;
+    fn sys_gittid(&mut self) -> SysResult;
 }
 
 impl Syscall for Process {
-    fn sys_test(&mut self) -> SysResult{
-        kinfo!("{} {} ", self.arg_raw(0),self.arg_raw(1));
-        Result::Ok(1)
+    fn sys_thread_create(&mut self) -> SysResult {
+        todo!()
+    }
+    fn sys_thread_count(&mut self) -> SysResult {
+        todo!()
+    }
+    fn sys_thread_waittid(&mut self) -> SysResult {
+        todo!()
+    }
+    fn sys_gittid(&mut self) -> SysResult {
+        todo!()
     }
     /// Redirect to [`Proc::fork`].
     ///
@@ -223,7 +234,7 @@ impl Syscall for Process {
         let ret = if file.fstat(&mut stat).is_err() {
             Err(())
         } else {
-            let pgt = self.data.get_mut().pagetable.as_mut().unwrap();
+            let pgt = unsafe { self.data.get_mut().pagetable.unwrap().as_mut().unwrap() };
             if pgt.copy_out(&stat as *const FileStat as *const u8, addr, mem::size_of::<FileStat>()).is_err() {
                 Err(())
             } else {
