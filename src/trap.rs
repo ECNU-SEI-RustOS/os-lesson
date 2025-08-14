@@ -131,50 +131,93 @@ pub unsafe extern fn user_trap() {
     user_trap_ret();
 }
 
-/// Return to user space
+/// 返回用户空间
+///
+/// # 功能说明
+/// 准备并执行从内核模式返回到用户空间的所有操作，
+/// 包括设置状态寄存器、陷阱向量和页表切换。
+///
+/// # 流程解释
+/// 1. 禁用中断（sstatus::intr_off）
+/// 2. 设置返回用户模式所需状态（sstatus::user_ret_prepare）
+/// 3. 设置陷阱向量为用户空间处理程序（trampoline.S）
+/// 4. 准备用户空间页表
+/// 5. 通过trampoline跳转回用户空间
+///
+/// # 返回值
+/// 永不返回（-> !）
+///
+/// # 安全性
+/// - 必须在用户陷阱处理完成后调用
+/// - 涉及页表和地址空间切换
 pub unsafe fn user_trap_ret() -> ! {
-    // disable interrupts and prepare sret to user mode
+    // 禁用中断并设置返回用户模式状态
     sstatus::intr_off();
     sstatus::user_ret_prepare();
 
-    // send interrupts and exceptions to uservec/trampoline in trampoline.S
+    // 设置陷阱向量为用户空间处理程序（trampoline.S）
     stvec::write(TRAMPOLINE.into());
 
-    // let the current process prepare for the sret
+    // 获取当前进程的用户页表
     let satp = {
         let pd = CPU_MANAGER.my_proc().data.get_mut();
         pd.user_ret_prepare()
     };
 
-    // call userret with virtual address
+    // 计算userret在跳板页中的虚拟地址
     extern "C" {
-        fn trampoline();
-        fn userret();
+        fn trampoline();    // 跳板页起始地址
+        fn userret();       // 用户返回函数
     }
     let distance = userret as usize - trampoline as usize;
     let userret_virt: extern "C" fn(usize, usize) -> ! =
         core::mem::transmute(Into::<usize>::into(TRAMPOLINE) + distance);
+
+    // 调用userret(TRAPFRAME, satp)返回用户空间
     userret_virt(TRAPFRAME.into(), satp);
 }
 
-/// Used to handle kernel space's trap
-/// Being called from kernelvec
+/// 内核模式陷阱处理（由kernelvec调用）
+///
+/// # 功能说明
+/// 处理内核执行过程中发生的中断和异常，
+/// 包括设备中断、时钟中断等。
+///
+/// # 流程解释
+/// 1. 保存关键寄存器状态（sepc, sstatus）
+/// 2. 验证中断来源为内核模式
+/// 3. 根据中断原因分发处理：
+///   - 外部中断：处理UART/磁盘中断
+///   - 软件中断：处理时钟中断并尝试调度
+///   - 系统调用：内核模式不应触发（panic）
+///   - 其他异常：panic
+/// 4. 恢复保存的寄存器状态
+///
+/// # 安全性
+/// - 必须由kernelvec在正确上下文中调用
+/// - 直接访问硬件和全局状态
 #[no_mangle]
 pub unsafe fn kerneltrap() {
+    // 保存关键寄存器状态
     let local_sepc = sepc::read();
     let local_sstatus = sstatus::read();
 
+    // 验证中断来源：必须来自内核模式
     if !sstatus::is_from_supervisor() {
         panic!("not from supervisor mode");
     }
+
+    // 验证中断状态：内核陷阱处理期间应禁用中断
     if sstatus::intr_get() {
         panic!("interrupts enabled");
     }
 
+    // 根据中断原因分发处理
     match scause::get_scause() {
         ScauseType::IntSExt => {
-            // this is a supervisor external interrupt, via PLIC.
+            // 监督者模式外部中断
 
+            // 处理PLIC中断（同用户模式）
             let irq = plic::claim();
             if irq as usize == UART0_IRQ {
                 UART.intr();
@@ -188,10 +231,9 @@ pub unsafe fn kerneltrap() {
             }
         }
         ScauseType::IntSSoft => {
-            // software interrupt from a machine-mode timer interrupt,
-            // forwarded by timervec in kernelvec.S.
+            // 监督者模式软件中断
 
-            // only cpu 0 inc ticks
+            // 仅在CPU 0上更新时钟计数
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
             }
