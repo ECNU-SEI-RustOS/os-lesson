@@ -1,4 +1,4 @@
-//! Trap handler between user/kernel space and kernel space
+//! 中断处理模块，用户或内核模式下发生中断或异常时进行处理
 
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;

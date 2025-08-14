@@ -1,3 +1,5 @@
+//! 定义系统内核的输出方法
+
 use core::fmt;
 use core::panic;
 use core::sync::atomic::Ordering;
@@ -41,6 +43,7 @@ pub fn _print(args: fmt::Arguments<'_>) {
     }
 }
 
+/// 在终端输出一串字符
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {
@@ -48,6 +51,7 @@ macro_rules! print {
     };
 }
 
+/// 在终端输出一行字符
 #[macro_export]
 macro_rules! println {
     () => {$crate::print!("\n")};

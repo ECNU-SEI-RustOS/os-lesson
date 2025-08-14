@@ -1,3 +1,6 @@
+//! Rust语言入口点，系统启动时的初始点
+
+
 use core::{arch::asm, convert::Into};
 
 use crate::{consts::{CLINT_MTIMECMP, NCPU}, register::sie};

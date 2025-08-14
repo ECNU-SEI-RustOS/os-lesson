@@ -1,3 +1,5 @@
+//! 定义操作系统中用到的各种常量
+
 use core::ops::{Add, Sub};
 use core::convert::From;
 

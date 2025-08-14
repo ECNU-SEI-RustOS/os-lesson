@@ -1,4 +1,5 @@
-//! the riscv Platform Level Interrupt Controller (PLIC)
+//! RISC-V PLIC（平台级中断控制器）驱动
+//! 负责处理外部设备中断
 
 use core::ptr;
 

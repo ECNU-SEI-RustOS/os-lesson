@@ -1,3 +1,5 @@
+//! 设备驱动模块，包含串口与磁盘的驱动
+
 use core::sync::atomic::AtomicBool;
 
 use crate::{consts::driver::NDEV, mm::Address};

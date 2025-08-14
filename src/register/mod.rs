@@ -1,4 +1,4 @@
-//! register modules defined in this file are only used once in start.rs
+//! 定义操作所需RISC-V寄存器的接口
 
 pub mod clint;
 pub mod mie;

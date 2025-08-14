@@ -1,3 +1,5 @@
+//! 内存管理模块
+
 use alloc::boxed::Box;
 use core::{alloc::AllocError, ptr};
 

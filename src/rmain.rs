@@ -1,3 +1,5 @@
+//! 内核主入口函数，完成多核系统中各hart的初始化流程。
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::driver::{virtio_disk::DISK, console};
