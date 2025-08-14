@@ -98,7 +98,6 @@ pub unsafe fn user_trap_ret() -> ! {
     let (satp,pid) = {
         let pdata = CPU_MANAGER.my_proc().data.get_mut();
         let pid = CPU_MANAGER.my_proc().excl.lock().pid;
-        let a =pdata.pagetable.as_ref().unwrap();
         (pdata.user_ret_prepare(), pid)
     };
     //call userret with virtual address
