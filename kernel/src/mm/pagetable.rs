@@ -456,22 +456,6 @@ impl PageTable {
             )
             .ok()?;
         kinfo!("user space map {:?}",VirtAddr::from(trapframe_from_pid(pid)));
-        //create the first task's ustack
-        // let mem = match unsafe { RawQuadPage::try_new_zeroed() } {
-        //     Ok(res) => res as usize,
-        //     Err(_) => panic!("memory not enough"),
-        // };
-        // let va =VirtAddr::from(ustack_bottom_from_pid(1));
-        // match pagetable
-        //             .map_pages(
-        //                 va,
-        //                 USER_STACK_SIZE,
-        //                 PhysAddr::try_from(mem).unwrap(),
-        //                 PteFlag::R | PteFlag::W | PteFlag::U,
-        //             ) {
-        //     Ok(_) => {},
-        //     Err(_) => {panic!("sad")},
-        // };
         Some(pagetable)
     }
 

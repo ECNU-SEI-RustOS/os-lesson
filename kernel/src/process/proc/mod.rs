@@ -110,8 +110,6 @@ pub struct ProcData {
     pub pagetable: Option<Box<PageTable>>,
     /// 进程当前工作目录的 inode。
     pub cwd: Option<Inode>,
-    /// 当前进程中的线程
-    pub tasks: Vec<Option<Arc<Task>>>
 }
 
 
@@ -127,13 +125,12 @@ impl ProcData {
             trapframe: ptr::null_mut(),
             pagetable: None,
             cwd: None,
-            tasks: Vec::new()
         }
     }
     /// 获取进程中的线程数量
-    pub fn thread_count(&self) -> usize {
-        self.tasks.len()
-    }
+    // pub fn thread_count(&self) -> usize {
+    //     self.tasks.len()
+    // }
     /// Set kstack
     pub fn set_kstack(&mut self, kstack: usize) {
         self.kstack = kstack;
@@ -208,9 +205,8 @@ impl ProcData {
         let trapframe: &mut TrapFrame = unsafe { self.trapframe.as_mut().unwrap() };
         trapframe.kernel_satp = satp::read();
         // current kernel stack's content is cleaned
-        // after returning to the kernel space
-        debug_assert_eq!(self.tasks.len(), 1);
-        trapframe.kernel_sp = &self.tasks[0].as_ref().unwrap().get_kstack_bottom() + KERNEL_STACK_SIZE;
+        // after returning to the kernel spaces
+        trapframe.kernel_sp = &self.kstack + KERNEL_STACK_SIZE;
         trapframe.kernel_trap = user_trap as usize;
         trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
         // restore the user pc previously stored in sepc
@@ -218,23 +214,22 @@ impl ProcData {
 
         self.pagetable.as_ref().unwrap().as_satp()
     }
-    pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
-        debug_assert_eq!(self.tasks.len(), 1);
-        let task = &self.tasks[0].as_ref().unwrap();
-        let trapframe: &mut TrapFrame = task.get_trap_frame();
-        trapframe.kernel_satp = satp::read();
-        // current kernel stack's content is cleaned
-        // after returning to the kernel space
+    // pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
+    //     let task = &self.tasks[0].as_ref().unwrap();
+    //     let trapframe: &mut TrapFrame = task.get_trap_frame();
+    //     trapframe.kernel_satp = satp::read();
+    //     // current kernel stack's content is cleaned
+    //     // after returning to the kernel space
         
-        trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
-        trapframe.kernel_trap = user_trap as usize;
-        trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
+    //     trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
+    //     trapframe.kernel_trap = user_trap as usize;
+    //     trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
 
-        // restore the user pc previously stored in sepc
-        sepc::write(trapframe.epc);
+    //     // restore the user pc previously stored in sepc
+    //     sepc::write(trapframe.epc);
 
-        (self.pagetable.as_ref().unwrap().as_satp(), task.tid)
-    }
+    //     (self.pagetable.as_ref().unwrap().as_satp(), task.tid)
+    // }
 
     /// 简单检查用户传入的虚拟地址是否在合法范围内。
     fn check_user_addr(&self, user_addr: usize) -> Result<(), ()> {
@@ -488,10 +483,6 @@ impl Process {
         debug_assert!(pdata.cwd.is_none());
         pdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
 
-        let task = Task::new(Some(self as *mut Process), 1, PAGE_SIZE, 0);
-        let task = Arc::new(task);
-        self.data.get_mut().tasks.push(Some(Arc::clone(&task)));
-        //add_task(Arc::clone(&task));
         
     }
 
@@ -540,8 +531,8 @@ impl Process {
     /// - 系统调用执行过程中可能包含更底层的 `unsafe`，调用此函数时需确保整体安全环境。
     pub fn syscall(&mut self) {
         sstatus::intr_on();
-        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
-        //let trapframe = unsafe { self.data.get_mut().trapframe.as_mut().unwrap() };
+        //let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
+        let trapframe = unsafe { self.data.get_mut().trapframe.as_mut().unwrap() };
         let a7 = trapframe.a7;
         trapframe.admit_ecall();
         let sys_result = match a7 {
@@ -751,10 +742,7 @@ impl Process {
         let mut cexcl = child.excl.lock();
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
-        let task = Task::from(Some(child as *mut Process), 1, cdata.ustack_base, unsafe { pdata.tasks[0].as_ref().unwrap().get_trap_frame()});
-        let task = Arc::new(task);
-        cdata.tasks.push(Some(Arc::clone(&task)));
-        //add_task(task);
+
         PROCFIFO.lock().add(child as *const Process);
     
         Ok(cpid)
@@ -778,8 +766,8 @@ impl Process {
     /// # 返回值
     /// - 返回指定参数的原始寄存器值，类型为 usize。
     fn arg_raw(&mut self, n: usize) -> usize {
-        //let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
-        let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
+        let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
+        //let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
         match n {
             0 => {trapframe.a0}
             1 => {trapframe.a1}

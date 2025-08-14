@@ -94,25 +94,13 @@ pub unsafe fn user_trap_ret() -> ! {
     stvec::write(TRAMPOLINE.into());
 
     // let pf;
-    // let the current process prepare for the sret
-    // let (satp,pid) = {
-    //     let pdata = CPU_MANAGER.my_proc().data.get_mut();
-    //     let pid = CPU_MANAGER.my_proc().excl.lock().pid;
-    //     let a =pdata.pagetable.as_ref().unwrap();
-    //     pf = a.find_pa_by_kernel(trapframe_from_pid(pid).into()).unwrap().into_raw();
-    //     (pdata.user_ret_prepare(), pid)
-    // };
-    let tf;
-    let (satp,tid) = {
+    //let the current process prepare for the sret
+    let (satp,pid) = {
         let pdata = CPU_MANAGER.my_proc().data.get_mut();
-        let res = pdata.user_ret_prepare_task();
-        let a = pdata.pagetable.as_mut().unwrap();
-        
-        tf = a.find_pa_by_kernel(trapframe_from_tid(res.1).into()).unwrap().into_raw();
-        res
+        let pid = CPU_MANAGER.my_proc().excl.lock().pid;
+        let a =pdata.pagetable.as_ref().unwrap();
+        (pdata.user_ret_prepare(), pid)
     };
-    // debug_assert_eq!((tf as *const TrapFrame).as_ref().unwrap(),(pf as *const TrapFrame).as_ref().unwrap());
-    // kinfo!("tf {:?}\npf {:?}", (tf as *const TrapFrame).as_ref().unwrap(),(pf as *const TrapFrame).as_ref().unwrap());
     //call userret with virtual address
     extern "C" {
         fn trampoline();
@@ -121,7 +109,7 @@ pub unsafe fn user_trap_ret() -> ! {
     let distance = userret as usize - trampoline as usize;
     let userret_virt: extern "C" fn(usize, usize) -> ! =
         core::mem::transmute(Into::<usize>::into(TRAMPOLINE) + distance);
-    userret_virt(trapframe_from_tid(tid).into(), satp);
+    userret_virt(trapframe_from_pid(pid).into(), satp);
 }
 
 /// Used to handle kernel space's trap

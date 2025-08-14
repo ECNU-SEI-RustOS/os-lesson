@@ -155,7 +155,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // allocate two page for user stack
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
-    // 准备最多64个线程空间（后续可以优化）
+    // 准备最多1个线程空间（后续可以优化）
     pdata.set_ustack_base(proc_size);
     let ustack_base = proc_size;
 
@@ -214,10 +214,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     for i in 0..count {
         pdata.name[i] = path[i+off];
     }
-    // 清理task
-    while let Some(item) = pdata.tasks.pop() {
-        drop(item);
-    }
+
 
     let mut old_pgt = pdata.pagetable.replace(pgt).unwrap();
     let old_size = pdata.size;
@@ -225,9 +222,6 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     trapframe.epc = elf.entry as usize;
     trapframe.sp = stack_pointer;
     
-    let task = Task::new(Some(process_ptr), 1, ustack_base ,elf.entry as usize);
-    let task = Arc::new(task);
-    pdata.tasks.push(Some(Arc::clone(&task)));
     
     //add_task(Arc::clone(&task));
     

@@ -469,9 +469,9 @@ impl ProcManager {
         exit_pexcl.state = ProcState::ZOMBIE;
         let epdata= self.table[exit_index].data.get();
         let pdata = unsafe {&mut *(epdata as *mut ProcData) };
-        while let Some(item) = pdata.tasks.pop(){
-            drop(item);
-        }
+        // while let Some(item) = pdata.tasks.pop(){
+        //     drop(item);
+        // }
 
         PID_ALLOCATOR.lock().pid_dealloc(pid);
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
