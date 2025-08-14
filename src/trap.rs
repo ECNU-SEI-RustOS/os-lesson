@@ -50,62 +50,84 @@ pub unsafe fn trap_init_hart() {
 /// - 直接访问进程管理器和硬件寄存器
 #[no_mangle]
 pub unsafe extern fn user_trap() {
+    // 验证中断来源：必须来自用户模式
     if !sstatus::is_from_user() {
         panic!("not from user mode, sstatus={:#x}", sstatus::read());
     }
 
-    // switch the trap handler to kerneltrap()
+    // 设置陷阱处理程序为内核模式入口
     extern "C" {fn kernelvec();}
     stvec::write(kernelvec as usize);
 
+    // 获取当前进程
     let p = CPU_MANAGER.my_proc();
 
+    // 根据中断原因分发处理
     match scause::get_scause() {
         ScauseType::IntSExt => {
-            // this is a supervisor external interrupt, via PLIC.
+            // 监督者模式外部中断
 
+            // 从PLIC中断控制器获取中断号
             let irq = plic::claim();
+
+            // 处理UART串口中断
             if irq as usize == UART0_IRQ {
                 UART.intr();
+
+            // 处理虚拟磁盘中断
             } else if irq as usize == VIRTIO0_IRQ {
                 DISK.lock().intr();
             } else {
                 // panic!("unexpected interrupt, irq={}", irq);
             }
+            // 其他中断暂不处理
+
+            // 完成中断处理
             if irq > 0 {
                 plic::complete(irq);
             }
 
+            // 检查进程终止标志
             p.check_abondon(-1);
         }
         ScauseType::IntSSoft => {
-            // software interrupt from a machine-mode timer interrupt,
-            // forwarded by timervec in kernelvec.S.
+            // 监督者模式软件中断
 
-            // only cpu 0 inc ticks
+            // 仅在CPU 0上更新时钟计数
             if CpuManager::cpu_id() == 0 {
                 clock_intr();
             }
 
-            // acknowledge the software interrupt
+            // 清除软件中断标志
             sip::clear_ssip();
 
-            // give up the cpu
+            // 检查进程终止标志
             p.check_abondon(-1);
+            // 主动让出CPU
             p.yielding();
         }
         ScauseType::ExcUEcall => {
+            // 用户模式系统调用
+
+            // 检查进程终止标志
             p.check_abondon(-1);
+            // 处理系统调用
             p.syscall();
+            // 再次检查终止标志（系统调用可能设置）
             p.check_abondon(-1);
         }
         ScauseType::Unknown => {
+            // 未知异常
+
             println!("scause {:#x}", scause::read());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
+
+            // 终止当前进程
             p.abondon(-1);
         }
     }
 
+    // 返回用户空间
     user_trap_ret();
 }
 
