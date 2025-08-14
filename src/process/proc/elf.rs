@@ -1,4 +1,4 @@
-//! ELF loader
+//! 从文件系统加载ELF文件开始执行
 
 use alloc::boxed::Box;
 use alloc::str;

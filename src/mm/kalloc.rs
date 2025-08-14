@@ -1,6 +1,4 @@
-//! The kernel heap allocator
-//!
-//! reference: https://pdos.csail.mit.edu/6.828/2019/lec/malloc.c
+//! 内核堆内存分配器，采用伙伴算法
 
 use bit_field::BitField;
 

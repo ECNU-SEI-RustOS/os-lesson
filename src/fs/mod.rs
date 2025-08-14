@@ -22,10 +22,8 @@ use log::Log;
 use bio::BufData;
 use inode::icheck;
 
-/// Init fs.
-/// Read super block info.
-/// Init log info and recover if necessary.
-/// SAFETY: It must only be called once by the first user process's fork_ret.
+/// 初始化文件系统，读取磁盘超级块信息，并根据需要进行日志恢复
+/// 安全性：必须在系统启动时被调用一次
 pub unsafe fn init(dev: u32) {
     SUPER_BLOCK.init(dev);
     let log_ptr = LOG.lock().deref_mut() as *mut Log;

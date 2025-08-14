@@ -1,3 +1,5 @@
+//! 文件以及管道相关的操作
+
 use alloc::sync::Arc;
 use core::cell::UnsafeCell;
 use core::cmp::min;

@@ -1,3 +1,5 @@
+//! 处理器状态管理，用于控制正在执行的进程与中断开关
+
 use array_macro::array;
 
 use core::ptr;

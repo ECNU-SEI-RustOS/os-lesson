@@ -1,5 +1,4 @@
-//! disk block operations
-//! include bitmap and inode block
+//! 磁盘块操作，包括位映射与索引节点
 
 use core::ptr;
 

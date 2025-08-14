@@ -1,3 +1,5 @@
+//! Rust语言双向链表实现
+
 use core::ptr;
 
 #[repr(C)]

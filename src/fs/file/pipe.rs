@@ -1,3 +1,5 @@
+//! 管道操作
+
 use alloc::sync::Arc;
 use core::mem;
 use core::num::Wrapping;

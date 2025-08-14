@@ -1,4 +1,4 @@
-//! Log-relevant operations
+//! 日志层
 
 use core::{ops::{Deref, DerefMut}, panic, ptr};
 use core::mem;
