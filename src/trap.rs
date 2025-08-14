@@ -12,6 +12,15 @@ use crate::plic;
 use crate::driver::virtio_disk::DISK;
 use crate::driver::uart::UART;
 
+/// 初始化当前CPU核心的中断处理
+///
+/// # 功能说明
+/// 设置监督者模式陷阱向量基址寄存器(stvec)，
+/// 指向内核中断处理程序(kernelvec)。
+///
+/// # 安全性
+/// - 必须在核心启动时调用
+/// - 需确保kernelvec符号在链接脚本中正确定义
 pub unsafe fn trap_init_hart() {
     extern "C" {
         fn kernelvec();
