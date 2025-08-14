@@ -238,30 +238,35 @@ pub unsafe fn kerneltrap() {
                 clock_intr();
             }
 
-            // acknowledge the software interrupt
+            // 清除软件中断标志
             sip::clear_ssip();
 
-            // give up the cpu
+            // 尝试让出CPU（调度其他进程）
             CPU_MANAGER.my_cpu_mut().try_yield_proc();
         }
-        ScauseType::ExcUEcall => {
+        ScauseType::ExcUEcall => {  // 用户模式系统调用（内核不应触发）
             panic!("ecall from supervisor mode");
         }
-        ScauseType::Unknown => {
+        ScauseType::Unknown => {    // 未知异常
             println!("scause {:#x}", scause::read());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
             panic!("unknown trap type");
         }
     }
 
-    // The yielding() may have caused some traps to occur,
-    // so restore trap registers for use by kernelvec.S's sepc instruction.
+    // 恢复保存的寄存器状态
     sepc::write(local_sepc);
     sstatus::write(local_sstatus);
 }
 
+/// 全局时钟计数器（自旋锁保护）
 static TICKS: SpinLock<Wrapping<usize>> = SpinLock::new(Wrapping(0), "time");
 
+/// 处理时钟中断（更新全局计数器）
+///
+/// # 功能说明
+/// 增加全局时钟计数并唤醒等待时钟的进程。
+/// 由时钟中断处理程序调用。
 fn clock_intr() {
     let mut guard = TICKS.lock();
     *guard += Wrapping(1);
@@ -269,21 +274,41 @@ fn clock_intr() {
     drop(guard);
 }
 
-/// Sleep for a specified number of ticks.
+/// 使进程休眠指定时钟周期
+///
+/// # 功能说明
+/// 将当前进程置于休眠状态，直到经过指定数量的时钟周期。
+///
+/// # 参数
+/// - `p`: 当前进程引用
+/// - `count`: 要休眠的时钟周期数
+///
+/// # 返回值
+/// - `Ok(())`: 成功休眠指定周期
+/// - `Err(())`: 休眠期间进程被终止
 pub fn clock_sleep(p: &Proc, count: usize) -> Result<(), ()> {
     let mut guard = TICKS.lock();
-    let old_ticks = *guard;
+    let old_ticks = *guard; // 记录起始时钟
+
+    // 等待指定周期
     while (*guard - old_ticks) < Wrapping(count) {
+        // 检查进程终止标志
         if p.killed.load(Ordering::Relaxed) {
             return Err(())
         }
+
+        // 在TICKS地址上休眠
         p.sleep(&TICKS as *const _ as usize, guard);
+        // 被唤醒后重新获取锁
         guard = TICKS.lock();
     }
     Ok(())
 }
 
-/// Read the current ticks.
+/// 读取当前时钟计数值
+///
+/// # 返回值
+/// 系统启动以来的时钟周期数
 pub fn clock_read() -> usize {
     TICKS.lock().0
 }
