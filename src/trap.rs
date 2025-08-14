@@ -29,7 +29,25 @@ pub unsafe fn trap_init_hart() {
     stvec::write(kernelvec as usize);
 }
 
-/// uservec in trampoline.S jumps here 
+/// 用户模式陷阱入口（由trampoline.S调用）
+///
+/// # 功能说明
+/// 处理从用户模式触发的所有中断和异常事件，
+/// 包括系统调用、设备中断、时钟中断等。
+///
+/// # 流程解释
+/// 1. 验证中断来源确为用户模式
+/// 2. 设置陷阱处理程序为内核模式处理入口
+/// 3. 根据中断原因(scause)分发处理：
+///   - 外部中断：处理UART/磁盘中断
+///   - 软件中断：处理时钟中断
+///   - 系统调用：执行系统调用处理
+///   - 其他异常：终止进程
+/// 4. 处理完成后返回用户空间
+///
+/// # 安全性
+/// - 必须由trampoline.S在正确上下文中调用
+/// - 直接访问进程管理器和硬件寄存器
 #[no_mangle]
 pub unsafe extern fn user_trap() {
     if !sstatus::is_from_user() {
