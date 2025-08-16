@@ -40,7 +40,24 @@ const SYSCALL_MKDIR: usize = 20;
 const SYSCALL_CLOSE: usize = 21;
 const SYSCALL_GETMTIME: usize = 22;
 const SYSCALL_WAITPID: usize = 23;
-const SYSCALL_TEST: usize = 99;
+const SYSCALL_THREAD_CREATE: usize = 24;
+const SYSCALL_THREAD_COUNT: usize = 25;
+const SYSCALL_THREAD_WAITTID: usize = 26;
+const SYSCALL_GETTID: usize = 27;
+
+pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
+    syscall(SYSCALL_THREAD_CREATE, [entry,arg,0,0,0,0])
+}
+pub fn sys_thread_count() -> isize {
+    syscall(SYSCALL_THREAD_COUNT, [0, 0, 0, 0, 0, 0])
+}
+pub fn sys_thread_waittid(tid: usize) -> isize {
+    syscall(SYSCALL_THREAD_WAITTID, [tid, 0, 0, 0, 0, 0])
+}
+
+pub fn sys_gettid() -> isize {
+    syscall(SYSCALL_GETTID, [0, 0, 0, 0, 0, 0])
+}
 
 ///进程 A 调用 fork 系统调用之后，内核会创建一个新进程 B，这个进程 B 和调用 fork 的进程A在它们分别返回用户态那一瞬间几乎处于相同的状态：这意味着它们包含的用户态的代码段、堆栈段及其他数据段的内容完全相同，但是它们是被放在两个独立的地址空间中的。因此新进程的地址空间需要从原有进程的地址空间完整拷贝一份。两个进程通用寄存器也几乎完全相同。
 pub fn sys_fork() -> isize {

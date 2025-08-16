@@ -1,3 +1,4 @@
+use alloc::task;
 use array_macro::array;
 
 use alloc::string::String;
@@ -8,6 +9,7 @@ use core::fmt::Display;
 use core::mem;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
+use crate::process::proc::ProcState;
 use crate::process::{PROC_MANAGER};
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
@@ -49,16 +51,54 @@ pub trait Syscall {
 
 impl Syscall for Process {
     fn sys_thread_create(&mut self) -> SysResult {
-        todo!()
+        let entry = self.arg_raw(0);
+        let arg = self.arg_raw(1);
+        let ret = self.thread_create(entry, arg);
+
+        #[cfg(feature = "trace_syscall")]
+        println!("[{}].fork() = {:?}(pid)", self.excl.lock().pid, ret);
+
+        ret
     }
     fn sys_thread_count(&mut self) -> SysResult {
-        todo!()
+        if self.is_child_task {
+            let count = unsafe { self.parent.unwrap().as_ref().unwrap().tasks.lock().len() + 1 };
+            Ok(count)
+        } else {
+            let count = self.tasks.lock().len() + 1;
+            Ok(count)
+        }
+
     }
     fn sys_thread_waittid(&mut self) -> SysResult {
-        todo!()
+        let ctid = self.arg_raw(0);
+        let mut child_task = None;
+        for task in self.tasks.lock().iter(){
+            let ctask = unsafe { task.unwrap().as_ref().unwrap() };
+            if ctask.excl.lock().tid == ctid {
+                child_task = Some(task.unwrap());
+            }
+        }
+        if child_task.is_none() {
+            return Err(());
+        }
+        let child_task = unsafe { child_task.unwrap().as_mut().unwrap() };
+        loop {
+            if child_task.excl.lock().state == ProcState::ZOMBIE {
+                break;
+            }
+            let mut parent_map = unsafe { PROC_MANAGER.parents.lock() };
+                        
+            let channel = self as *const Process as usize;
+            self.sleep(channel, parent_map);
+            parent_map = unsafe { PROC_MANAGER.parents.lock() };
+        }
+
+        Ok(child_task.excl.lock().exit_status as usize)
     }
     fn sys_gittid(&mut self) -> SysResult {
-        todo!()
+        let tid = self.excl.lock().tid;
+        Ok(tid)
     }
     /// Redirect to [`Proc::fork`].
     ///
