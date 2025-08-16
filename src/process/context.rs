@@ -4,7 +4,7 @@ pub struct Context {
     ra: usize,
     sp: usize,
 
-    // callee-saved
+    // 被调用者保存的（寄存器）
     s0: usize,
     s1: usize,
     s2: usize,

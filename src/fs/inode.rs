@@ -92,7 +92,7 @@ impl InodeCache {
     fn get(&self, dev: u32, inum: u32) -> Inode {
         let mut guard = self.meta.lock();
         
-        // lookup in the cache
+        // 在缓存中查找
         let mut empty_i: Option<usize> = None;
         for i in 0..NINODE {
             if guard[i].inum == inum && guard[i].refs > 0 && guard[i].dev == dev {
@@ -108,7 +108,7 @@ impl InodeCache {
             }
         }
 
-        // not found
+        // 未找到
         let empty_i = match empty_i {
             Some(i) => i,
             None => panic!("inode: not enough"),
@@ -199,7 +199,7 @@ impl InodeCache {
         let imeta = &mut guard[i];
 
         if imeta.refs == 1 {
-            // SAFETY: reference count is 1, so this lock will not block.
+            // 安全性：引用计数为 1，因此这个锁不会阻塞。
             let mut idata = self.data[i].lock();
             if idata.valid.is_none() || idata.dinode.nlink > 0 {
                 idata.valid.take();
@@ -213,10 +213,10 @@ impl InodeCache {
                 idata.valid.take();
                 drop(idata);
 
-                // recycle after this inode content in the cache is no longer valid.
-                // note: it is wrong to recycle it earlier,
-                // otherwise the cache content might change
-                // before the previous content written to disk.
+                // 当缓存中的此 inode 内容不再有效后再回收。
+                // 注意：过早回收是错误的，
+                // 否则在之前的内容写入磁盘之前，
+                // 缓存内容可能会发生改变。
                 let mut guard = self.meta.lock();
                 guard[i].refs -= 1;
                 debug_assert_eq!(guard[i].refs, 0);
@@ -390,7 +390,7 @@ impl InodeCache {
         let dir_inode = self.namei_parent(path, &mut name)?;
         let mut dir_idata = dir_inode.lock();
 
-        // lookup first
+        // 先查找
         if let Some((inode, _)) = dir_idata.dir_lookup(&name, false) {
             if reuse {
                 return Some(inode)
@@ -399,7 +399,7 @@ impl InodeCache {
             }
         }
 
-        // not found, create it
+        // 未找到，创建
         let (dev, _) = *dir_idata.valid.as_ref().unwrap();
         let inum = inode_alloc(dev, itype);
         let inode = self.get(dev, inum);
@@ -473,7 +473,7 @@ impl InodeCache {
 /// - 要求调用者确保传入的 `path[cur]` 不会越界读取；
 
 fn skip_path(path: &[u8], mut cur: usize, name: &mut [u8; MAX_DIR_SIZE]) -> usize {
-    // skip preceding b'/'
+    // 跳过前面的 b'/'
     while path[cur] == b'/' {
         cur += 1;
     }
@@ -493,7 +493,7 @@ fn skip_path(path: &[u8], mut cur: usize, name: &mut [u8; MAX_DIR_SIZE]) -> usiz
     unsafe { ptr::copy(path.as_ptr().offset(start as isize), name.as_mut_ptr(), count); }
     name[count] = 0;
 
-    // skip succeeding b'/'
+    // 跳过后续的 b'/'
     while path[cur] == b'/' {
         cur += 1;
     }
@@ -583,9 +583,9 @@ impl Inode {
 }
 
 impl Drop for Inode {
-    /// Done with this inode.
-    /// If this is the last reference in the inode cache, then is might be recycled.
-    /// Further, if this inode has no links anymore, free this inode in the disk.
+    /// 处理完此 inode。
+    /// 如果这是 inode 缓存中的最后一个引用，则它可能会被回收。
+    /// 此外，如果此 inode 不再有任何链接，则在磁盘中释放该 inode。
     fn drop(&mut self) {
         ICACHE.put(self);
     }
@@ -651,31 +651,31 @@ impl InodeData {
         }
     }
 
-    /// Get inode dev and inum.
+    /// 获取 inode 的设备编号和 inode 编号。
     #[inline]
     pub fn get_dev_inum(&self) -> (u32, u32) {
         self.valid.unwrap()
     }
 
-    /// Get inode type.
+    /// 获取 inode 类型。
     #[inline]
     pub fn get_itype(&self) -> InodeType {
         self.dinode.itype
     }
 
-    /// Get device number.
+    /// 获取设备编号。
     #[inline]
     pub fn get_devnum(&self) -> (u16, u16) {
         (self.dinode.major, self.dinode.minor)
     }
 
-    /// Increase the hard link by 1.
+    /// 将硬链接数增加 1。
     #[inline]
     pub fn link(&mut self) {
         self.dinode.nlink += 1;
     }
 
-    /// Decrease the hard link by 1.
+    /// 将硬链接数减少 1。
     pub fn unlink(&mut self) {
         self.dinode.nlink -= 1;
     }
@@ -716,7 +716,7 @@ impl InodeData {
     pub fn truncate(&mut self) {
         let (dev, _) = *self.valid.as_ref().unwrap();
 
-        // direct block
+        // 直接块
         for i in 0..NDIRECT {
             if self.dinode.addrs[i] > 0 {
                 bm_free(dev, self.dinode.addrs[i]);
@@ -724,7 +724,7 @@ impl InodeData {
             }
         }
 
-        // indirect block
+        // 简洁块
         if self.dinode.addrs[NDIRECT] > 0 {
             let buf = BCACHE.bread(dev, self.dinode.addrs[NDIRECT]);
             let buf_ptr = buf.raw_data() as *const BlockNo;
@@ -818,7 +818,7 @@ impl InodeData {
     /// - 所有对目标地址 `dst` 的访问通过安全封装的 [`Address::copy_out`] 实现，调用方需保证地址有效；
     /// - 函数未修改 inode 状态，因此可安全并发只读调用；
     pub fn iread(&mut self, mut dst: Address, offset: u32, count: u32) -> Result<(), ()> {
-        // check the reading content is in range
+        // 检查读取的内容是否在范围内
         let end = offset.checked_add(count).ok_or(())?;
         if end > self.dinode.size {
             return Err(())
@@ -877,7 +877,7 @@ impl InodeData {
     /// - 所有数据访问均通过封装好的 `iread` 完成，`try_iread` 本身不涉及任何 unsafe 操作；
     /// - 调用方需确保 `dst` 地址合法，以避免读取数据写入非法内存；
     pub fn try_iread(&mut self, dst: Address, offset: u32, count: u32) -> Result<u32, ()> {
-        // check the reading content is in range
+        // 检查读取的内容是否在范围内
         if offset > self.dinode.size {
             return Ok(0)
         }
@@ -968,7 +968,7 @@ impl InodeData {
     /// - 所有外部数据来源都通过 `Address` 抽象，避免了裸指针的不安全访问；
     /// - 本函数修改了 inode 的数据块及文件大小，必须由事务机制（`LOG.begin_op()` / `end_op()`）包裹以确保一致性；
     pub fn try_iwrite(&mut self, mut src: Address, offset: u32, count: u32) -> Result<u32, ()> {
-        // check the writing content is in range
+        // 检查写入的内容是否在范围内
         if offset > self.dinode.size {
             return Err(())
         }
@@ -1075,7 +1075,7 @@ impl InodeData {
     fn map_blockno(&mut self, offset_bn: usize) -> u32 {
         let (dev, _) = *self.valid.as_ref().unwrap();
         if offset_bn < NDIRECT {
-            // in direct block
+            // 处理直接块
             if self.dinode.addrs[offset_bn] == 0 {
                 let free_bn = bm_alloc(dev);
                 self.dinode.addrs[offset_bn] = free_bn;
@@ -1084,7 +1084,7 @@ impl InodeData {
                 self.dinode.addrs[offset_bn]
             }
         } else if offset_bn < NDIRECT + NINDIRECT {
-            // in indirect block
+            // 处理间接块
             let count = (offset_bn - NDIRECT) as isize;
 
             let indirect_bn = if self.dinode.addrs[NDIRECT] == 0 {
@@ -1214,13 +1214,13 @@ impl InodeData {
         }
         let inum = inum as u16;
 
-        // the entry should not be present
+        // 该条目不应已存在
         if self.dir_lookup(name, false).is_some() {
-            // auto drop the returned inode
+            // 自动释放返回的inode
             return Err(())
         }
 
-        // allocate a dir entry
+        // 分配一个目录条目
         let de_size = mem::size_of::<DirEntry>() as u32;
         let mut dir_entry = DirEntry::empty();
         let dir_entry_ptr = Address::KernelMut(&mut dir_entry as *mut _ as *mut u8);
@@ -1280,12 +1280,12 @@ impl InodeData {
     /// - 通过 `SleepLock` 保护所有 inode 操作，确保并发安全；
     /// - 函数需在日志事务内调用，以确保对目录结构和 inode 的修改具有原子性和可恢复性；
     pub fn dir_unlink(&mut self, name: &[u8; MAX_DIR_SIZE]) -> Result<(), ()> {
-        // the name should not be . and ..
+        // 名称不能是 . 和 ..
         if name[0] == b'.' && (name[1] == 0 || (name[1] == b'.' && name[2] == 0)) {
             return Err(())
         }
 
-        // lookup the entry correspond to the name
+        // 查找与该名称对应的条目
         let inode: Inode;
         let offset: u32;
         match self.dir_lookup(&name, true) {
@@ -1296,7 +1296,7 @@ impl InodeData {
             _ => return Err(()),
         }
 
-        // check the entry
+        // 检查该条目
         let mut idata = inode.lock();
         if idata.dinode.nlink < 1 {
             panic!("entry inode's link is zero");
@@ -1305,7 +1305,7 @@ impl InodeData {
             return Err(())
         }
 
-        // empty the entry
+        // 清空该条目
         let de_size = mem::size_of::<DirEntry>() as u32;
         let dir_entry = DirEntry::empty();
         let dir_entry_ptr = Address::Kernel(&dir_entry as *const DirEntry as *const u8);
@@ -1313,7 +1313,7 @@ impl InodeData {
             panic!("cannot write entry previously read");
         }
 
-        // decrement some links
+        // 减少一些链接数
         if idata.dinode.itype == InodeType::Directory {
             self.dinode.nlink -= 1;
             self.update();
@@ -1370,21 +1370,21 @@ impl InodeData {
     }
 }
 
-/// Number of inodes in a single block.
+/// 单个块中的 inode 数量。
 pub const IPB: usize = BSIZE / mem::size_of::<DiskInode>();
 
-/// Given an inode number.
-/// Calculate the offset index of this inode inside the block. 
+/// 给定一个 inode 编号。
+/// 计算该 inode 在块内的偏移索引。
 #[inline]
 pub fn locate_inode_offset(inum: u32) -> isize {
     (inum as usize % IPB) as isize
 }
 
-/// Check several requirements that inode struct should satisify.
+/// 检查 inode 结构体应满足
 pub fn icheck() {
     debug_assert_eq!(mem::align_of::<BufData>() % mem::align_of::<DiskInode>(), 0);
 
-    // LTODO - replace some u32 to type alias BlockNo
+    // LTODO - 定义类型别名 BlockNo 以替代部分 u32
     debug_assert_eq!(mem::align_of::<BufData>() % mem::align_of::<BlockNo>(), 0);
     debug_assert_eq!(mem::size_of::<BlockNo>(), mem::size_of::<u32>());
     debug_assert_eq!(mem::align_of::<BlockNo>(), mem::align_of::<u32>());
@@ -1482,8 +1482,7 @@ impl DiskInode {
         }
     }
 
-    /// If the [`DiskInode`] is free, i.e., its type is [`InodeType::Empty`],
-    /// allocate it by setting its itype.
+    // 如果 [DiskInode] 是空闲的（即其类型为 [InodeType::Empty]），则通过设置其 itype 来分配它。
     pub fn try_alloc(&mut self, itype: InodeType) -> Result<(), ()> {
         if self.itype == InodeType::Empty {
             unsafe { ptr::write_bytes(self, 0, 1); }
