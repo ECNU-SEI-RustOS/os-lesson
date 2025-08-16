@@ -729,6 +729,8 @@ impl Process {
     /// - 调用者需保证进程状态和私有数据在调用时无并发冲突。
     /// - 子进程资源清理确保不产生内存泄漏和悬挂指针。
     fn fork(&mut self) -> Result<usize, ()> {
+        // 为便于后续代码编写，确保fork市当前进程中只有主线程
+        assert!(self.tasks.lock().len() == 0);
         let pdata = self.data.get_mut();
         let child = unsafe { PROC_MANAGER.alloc_proc().ok_or(())? };
         let mut cexcl = child.excl.lock();
