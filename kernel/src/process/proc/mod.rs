@@ -511,7 +511,22 @@ impl Process {
     /// 2. and then exit
     pub fn abondon(&mut self, exit_status: i32) {
         self.killed.store(true, Ordering::Relaxed);
-        unsafe { PROC_MANAGER.exiting(self.index, exit_status); }
+        if self.is_child_task {
+            unsafe { PROC_MANAGER.child_thread_exiting(self.index, exit_status); }
+        } else {
+            unsafe { 
+                loop{
+                    PROC_MANAGER.exiting(self.index, exit_status);
+                    //self.yielding();
+
+                    let mut parent_map = PROC_MANAGER.parents.lock();
+                        
+                    let channel = self as *const Process as usize;
+                    self.sleep(channel, parent_map);
+                    parent_map = PROC_MANAGER.parents.lock();
+                }; 
+            }
+        }
     }
 
     /// # 功能说明
