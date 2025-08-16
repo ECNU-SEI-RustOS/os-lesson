@@ -1,12 +1,12 @@
 use alloc::collections::VecDeque;
 
-use super::Process;
+use super::Task;
 
 use lazy_static::lazy_static;
 
 pub struct ProcessFIFO {
-    current: Option<*const Process>,
-    ready_queue: VecDeque<*const Process>,
+    current: Option<*const Task>,
+    ready_queue: VecDeque<*const Task>,
 }
 
 unsafe impl Sync for ProcessFIFO {}
@@ -19,10 +19,10 @@ impl ProcessFIFO {
             ready_queue: VecDeque::new(),
         }
     }
-    pub fn add(&mut self, process: *const Process) {
+    pub fn add(&mut self, process: *const Task) {
         self.ready_queue.push_back(process);
     }
-    pub fn fetch(&mut self) -> Option<*const Process> {
+    pub fn fetch(&mut self) -> Option<*const Task> {
         self.ready_queue.pop_front()
     }
 }

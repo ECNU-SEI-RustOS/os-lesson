@@ -15,14 +15,14 @@ use crate::mm::{
 };
 use crate::process::proc::manager::ProcessFIFO;
 use crate::process::proc::pid::PID_ALLOCATOR;
-use crate::process::proc::ProcData;
+use crate::process::proc::TaskData;
 use crate::process::task::trapframe_from_tid;
 use crate::process::task::tid::TID_ALLOCATOR;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
 pub use cpu::{pop_off, push_off};
 pub use cpu::{CpuManager, CPU_MANAGER};
-pub use proc::Process;
+pub use proc::Task;
 
 mod context;
 mod cpu;
@@ -71,7 +71,7 @@ pub static mut PROC_MANAGER: ProcManager = ProcManager::new();
 /// 但访问整个进程表本身未加锁，使用时需注意并发安全。
 pub struct ProcManager {
     /// 进程表，存放系统中所有的进程结构体，数量固定为 `NPROC`。
-    table: [Process; NPROC],
+    table: [Task; NPROC],
 
     /// 进程父子关系映射表，索引为子进程，值为对应父进程的索引。
     /// 受自旋锁保护以保证多线程环境下的安全访问。
@@ -92,7 +92,7 @@ lazy_static! {
 impl ProcManager {
     const fn new() -> Self {
         Self {
-            table: array![i => Process::new(i,false); NPROC],
+            table: array![i => Task::new(i,false); NPROC],
             parents: SpinLock::new(array![_ => None; NPROC], "proc parents"),
             init_proc: 0,
             pid: SpinLock::new(0, "pid"),
@@ -203,32 +203,32 @@ impl ProcManager {
     ///
     /// - 分配陷阱帧时使用了 `unsafe`，调用 `RawSinglePage::try_new_zeroed()`，
     ///   需要保证底层内存分配正确且有效。
-    fn alloc_proc(&mut self) -> Option<&mut Process> {
+    fn alloc_proc(&mut self) -> Option<&mut Task> {
         for process in self.table.iter_mut() {
             let mut guard = process.excl.lock();
             match guard.state {
                 ProcState::UNUSED => {
                     // holding the process's excl lock,
                     // so manager can modify its private data
-                    let pdata = process.data.get_mut();
+                    let tdata = process.data.get_mut();
 
                     // alloc trapframe
-                    pdata.trapframe =
+                    tdata.trapframe =
                         unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
                     let new_pid = PID_ALLOCATOR.lock().pid_alloc();
                     let new_tid = TID_ALLOCATOR.lock().tid_alloc();
-                    debug_assert!(pdata.pagetable.is_none());
+                    debug_assert!(tdata.pagetable.is_none());
 
-                    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, new_tid) {
-                        Some(pgt) => pdata.pagetable = Some(pgt),
+                    match PageTable::alloc_proc_pagetable(tdata.trapframe as usize, new_tid) {
+                        Some(pgt) => tdata.pagetable = Some(pgt),
                         None => {
                             unsafe {
-                                RawSinglePage::from_raw_and_drop(pdata.trapframe as *mut u8);
+                                RawSinglePage::from_raw_and_drop(tdata.trapframe as *mut u8);
                             }
                             return None;
                         }
                     }
-                    pdata.init_context();
+                    tdata.init_context();
                     guard.pid = new_pid;
                     guard.tid = new_tid;
                     guard.state = ProcState::ALLOCATED;
@@ -242,7 +242,7 @@ impl ProcManager {
 
         None
     }
-    pub fn alloc_task(&mut self, parent: *const Process) -> Option<&mut Process> {
+    pub fn alloc_task(&mut self, parent: *const Task) -> Option<&mut Task> {
         for process in self.table.iter_mut() {
             let mut guard = process.excl.lock();
             match guard.state {
@@ -250,15 +250,15 @@ impl ProcManager {
                     process.is_child_task = true;
                     // holding the process's excl lock,
                     // so manager can modify its private data
-                    let pdata = process.data.get_mut();
+                    let tdata = process.data.get_mut();
 
                     // alloc trapframe
-                    pdata.trapframe =
+                    tdata.trapframe =
                         unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
                     let new_tid = TID_ALLOCATOR.lock().tid_alloc();
-                    debug_assert!(pdata.pagetable.is_none());
+                    debug_assert!(tdata.pagetable.is_none());
 
-                    pdata.init_context();
+                    tdata.init_context();
                     guard.pid = unsafe { parent.as_ref().unwrap().excl.lock().pid };
                     guard.tid = new_tid;
 
@@ -298,7 +298,7 @@ impl ProcManager {
     ///
     /// - 通过持有进程的 `excl` 自旋锁保证状态修改的原子性，避免竞态条件。
     /// - 返回时释放了锁，调用者需确保使用该进程指针时的并发安全。
-    fn alloc_runnable(&mut self) -> Option<&mut Process> {
+    fn alloc_runnable(&mut self) -> Option<&mut Task> {
         for process in self.table.iter_mut() {
             let mut guard = process.excl.lock();
             match guard.state {
@@ -349,11 +349,11 @@ impl ProcManager {
         process.user_init();
         let mut guard = process.excl.lock();
         guard.state = ProcState::RUNNABLE;
-        PROCFIFO.lock().add(process as *const Process);
+        PROCFIFO.lock().add(process as *const Task);
     }
 
     /// 检查给定的进程是否是init
-    fn is_init_proc(&self, p: &Process) -> bool {
+    fn is_init_proc(&self, p: &Task) -> bool {
         ptr::eq(&self.table[0], p)
     }
 
@@ -393,18 +393,18 @@ impl ProcManager {
             let mut guard = process.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
-                PROCFIFO.lock().add(process as *const Process);
+                PROCFIFO.lock().add(process as *const Task);
             }
             drop(guard);
         }
     }
 
-    pub fn task_wakeup(&self, parent: *mut Process) {
+    pub fn task_wakeup(&self, parent: *mut Task) {
         let parent= unsafe { parent.as_mut().unwrap() };
         let mut guard = parent.excl.lock();
-        if guard.state == ProcState::SLEEPING && guard.channel == parent as *const Process as usize {
+        if guard.state == ProcState::SLEEPING && guard.channel == parent as *const Task as usize {
             guard.state = ProcState::RUNNABLE;
-            PROCFIFO.lock().add(parent as *const Process);
+            PROCFIFO.lock().add(parent as *const Task);
         }
         drop(guard);
     }
@@ -530,17 +530,16 @@ impl ProcManager {
             }
         }
         if have_child {
-            self.wakeup(&self.table[self.init_proc] as *const Process as usize);
+            self.wakeup(&self.table[self.init_proc] as *const Task as usize);
         }
         let exit_parenti = *parent_map[exit_index].as_ref().unwrap();
-        self.wakeup(&self.table[exit_parenti] as *const Process as usize);
+        self.wakeup(&self.table[exit_parenti] as *const Task as usize);
 
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
 
         exit_pexcl.state = ProcState::ZOMBIE;
-        let epdata = self.table[exit_index].data.get();
-        let pdata = unsafe { &mut *(epdata as *mut ProcData) };
+        let exit_tdata = self.table[exit_index].data.get();
 
         PID_ALLOCATOR.lock().pid_dealloc(pid);
         TID_ALLOCATOR.lock().tid_dealloc(tid);
@@ -585,7 +584,7 @@ impl ProcManager {
         exit_pexcl.exit_status = exit_status;
         exit_pexcl.state = ProcState::ZOMBIE;
         drop(exit_pexcl);
-        self.task_wakeup(parent as *mut Process);
+        self.task_wakeup(parent as *mut Task);
         self.table[exit_index].parent = None;
         unsafe {
             let mut exit_pexcl = self.table[exit_index].excl.lock();
@@ -637,8 +636,8 @@ impl ProcManager {
     ///   需保证唤醒机制和锁释放顺序正确避免死锁。
     fn waiting(&self, pi: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let process = unsafe { CPU_MANAGER.my_proc() };
-        let pdata = unsafe { process.data.get().as_mut().unwrap() };
+        let task = unsafe { CPU_MANAGER.my_proc() };
+        let tdata = unsafe { task.data.get().as_mut().unwrap() };
 
         loop {
             let mut have_child = false;
@@ -655,7 +654,7 @@ impl ProcManager {
                 let child_pid = child_excl.pid;
                 let child_tid = child_excl.tid;
                 if addr != 0
-                    && pdata
+                    && tdata
                         .copy_out(
                             &child_excl.exit_status as *const _ as *const u8,
                             addr,
@@ -674,20 +673,20 @@ impl ProcManager {
                 return Ok(child_pid);
             }
 
-            if !have_child || process.killed.load(Ordering::Relaxed) {
+            if !have_child || task.killed.load(Ordering::Relaxed) {
                 return Err(());
             }
 
             // have children, but none of them exit
-            let channel = process as *const Process as usize;
-            process.sleep(channel, parent_map);
+            let channel = task as *const Task as usize;
+            task.sleep(channel, parent_map);
             parent_map = self.parents.lock();
         }
     }
     fn waiting_pid(&self, current_pid: usize, child_pid: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let process = unsafe { CPU_MANAGER.my_proc() };
-        let pdata = unsafe { process.data.get().as_mut().unwrap() };
+        let task = unsafe { CPU_MANAGER.my_proc() };
+        let tdata = unsafe { task.data.get().as_mut().unwrap() };
         let mut child_index = 0usize;
         for i in 0..NPROC {
             if self.table[i].excl.lock().pid == child_pid {
@@ -711,12 +710,12 @@ impl ProcManager {
             if child_excl.state != ProcState::ZOMBIE {
                 // have children, but none of them exit
                 drop(child_excl);
-                let channel = process as *const Process as usize;
-                process.sleep(channel, parent_map);
+                let channel = task as *const Task as usize;
+                task.sleep(channel, parent_map);
                 parent_map = self.parents.lock();
             } else {
                 if addr != 0
-                    && pdata
+                    && tdata
                         .copy_out(
                             &child_excl.exit_status as *const _ as *const u8,
                             addr,
@@ -727,7 +726,7 @@ impl ProcManager {
                     return Err(());
                 }
 
-                if process.killed.load(Ordering::Relaxed) {
+                if task.killed.load(Ordering::Relaxed) {
                     return Err(());
                 }
 

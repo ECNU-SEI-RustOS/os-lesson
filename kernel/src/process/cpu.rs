@@ -1,7 +1,7 @@
 use array_macro::array;
 use alloc::sync::Arc;
 
-use super::{proc::ProcExcl, Context, ProcState, Process, PROC_MANAGER};
+use super::{proc::TaskExcl, Context, ProcState, Task, PROC_MANAGER};
 use crate::consts::NCPU;
 use crate::process::PROCFIFO;
 use crate::register::{sstatus, tp};
@@ -86,7 +86,7 @@ impl CpuManager {
     ///   调用者必须保证当前 CPU 的 `proc` 指针有效且唯一持有，
     ///   否则可能导致数据竞争或未定义行为。
     /// - 由于返回了可变引用，必须确保调用者不会引入别名可变引用。
-    pub fn my_proc(&self) -> &mut Process {
+    pub fn my_proc(&self) -> &mut Task {
         let process;
         push_off();
         unsafe {
@@ -156,7 +156,7 @@ impl CpuManager {
             } {
                 Some(process) => {
                     cpu.process = Some(process as _);
-                    let process = process as *mut Process;
+                    let process = process as *mut Task;
                     let task = &mut *process;
                     let mut guard = task.excl.lock();
                     guard.state = ProcState::RUNNING;
@@ -187,7 +187,7 @@ impl CpuManager {
 pub struct Cpu {
     /// 当前在该 CPU 上运行的进程的裸指针。
     /// 如果没有运行进程，则为 null。
-    process: Option<*mut Process>,
+    process: Option<*mut Task>,
 
     /// 调度器上下文，用于保存调度器自身的寄存器状态，
     /// 在进程切换时作为切换目标上下文。
@@ -248,9 +248,9 @@ impl Cpu {
     /// - 保证函数调用时符合锁和中断状态的前置条件，防止竞态和数据损坏。
     pub unsafe fn sched<'a>(
         &mut self,
-        guard: SpinLockGuard<'a, ProcExcl>,
+        guard: SpinLockGuard<'a, TaskExcl>,
         ctx: *mut Context,
-    ) -> SpinLockGuard<'a, ProcExcl> {
+    ) -> SpinLockGuard<'a, TaskExcl> {
         extern "C" {
             fn switch(old: *mut Context, new: *mut Context);
         }

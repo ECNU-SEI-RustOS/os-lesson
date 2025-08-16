@@ -4,7 +4,7 @@ use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
 use crate::process::task::trapframe_from_tid;
-use crate::{consts::{ TRAMPOLINE, UART0_IRQ, VIRTIO0_IRQ}, process::{Process, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
+use crate::{consts::{ TRAMPOLINE, UART0_IRQ, VIRTIO0_IRQ}, process::{Task, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -96,9 +96,9 @@ pub unsafe fn user_trap_ret() -> ! {
     // let pf;
     //let the current process prepare for the sret
     let (satp,tid) = {
-        let pdata = CPU_MANAGER.my_proc().data.get_mut();
+        let tdata = CPU_MANAGER.my_proc().data.get_mut();
         let tid = CPU_MANAGER.my_proc().excl.lock().tid;
-        (pdata.user_ret_prepare(), tid)
+        (tdata.user_ret_prepare(), tid)
     };
     //call userret with virtual address
     extern "C" {
@@ -188,7 +188,7 @@ fn clock_intr() {
 }
 
 /// Sleep for a specified number of ticks.
-pub fn clock_sleep(process: &Process, count: usize) -> Result<(), ()> {
+pub fn clock_sleep(process: &Task, count: usize) -> Result<(), ()> {
     let mut guard = TICKS.lock();
     let old_ticks = *guard;
     while (*guard - old_ticks) < Wrapping(count) {

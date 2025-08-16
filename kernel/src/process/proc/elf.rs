@@ -9,7 +9,7 @@ use crate::{consts::{MAXARG, MAXARGLEN, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::
 use crate::mm::{pg_round_up, Addr, Address, PageTable, RawPage, RawSinglePage, VirtAddr};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 
-use super::Process;
+use super::Task;
 
 /// 功能说明
 /// 该函数用于将指定路径（path）对应的 ELF 可执行文件加载到进程（Proc）的用户空间中，
@@ -61,7 +61,7 @@ use super::Process;
 ///   调用时必须保证输入路径和 ELF 文件的完整正确性，否则可能引发未定义行为。
 /// - 新页表替换旧页表时保证旧资源释放，避免内存泄漏或悬挂指针。
 /// - 不允许中断或异步信号干扰该过程，确保加载一致性。
-pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
+pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
     // get relevant inode using path
     let inode: Inode;
     LOG.begin_op();
@@ -91,12 +91,11 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
         return Err("bad elf magic number")
     }
 
-    let pid = process.excl.lock().pid;
     let tid = process.excl.lock().tid;
     // allocate new pagetable, not assign to proc yet
-    let pdata = process.data.get_mut();
+    let tdata = process.data.get_mut();
     let pgt;
-    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, tid) {
+    match PageTable::alloc_proc_pagetable(tdata.trapframe as usize, tid) {
         Some(res) => pgt = res,
         None => {
             drop(idata); drop(inode); LOG.end_op();
@@ -174,7 +173,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // 准备最多1个线程空间（后续可以优化）
     
     let ustack_base = proc_size;
-    pdata.ustack_base = ustack_base;
+    tdata.ustack_base = ustack_base;
     
     match pgt.uvm_alloc(proc_size,  proc_size + MAX_TASKS_PER_PROC*(USER_STACK_SIZE + PAGE_SIZE)) {
         Ok(ret_size) => proc_size = ret_size,
@@ -186,7 +185,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     for i in 1..=MAX_TASKS_PER_PROC {
         pgt.uvm_clear(proc_size - i*(USER_STACK_SIZE + PAGE_SIZE));
     }
-    let first_task_ustack_bottom = ustack_bottom_by_pos(pdata.ustack_base, 1);
+    let first_task_ustack_bottom = ustack_bottom_by_pos(tdata.ustack_base, 1);
     let mut stack_pointer = first_task_ustack_bottom + USER_STACK_SIZE;
     let stack_base = first_task_ustack_bottom;
     // prepare command line content in the user stack
@@ -223,18 +222,18 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     }
 
     // update the process's info
-    let trapframe = unsafe { pdata.trapframe.as_mut().unwrap() };
+    let trapframe = unsafe { tdata.trapframe.as_mut().unwrap() };
     trapframe.a1 = stack_pointer;
     let off = path.iter().position(|x| *x!=b'/').unwrap();
-    let count = min(path.len()-off, pdata.name.len());
+    let count = min(path.len()-off, tdata.name.len());
     for i in 0..count {
-        pdata.name[i] = path[i+off];
+        tdata.name[i] = path[i+off];
     }
 
 
-    let old_pgt = unsafe { pdata.pagetable.replace(pgt).unwrap().as_mut().unwrap() };
-    let old_size = pdata.size;
-    pdata.size = proc_size;
+    let old_pgt = unsafe { tdata.pagetable.replace(pgt).unwrap().as_mut().unwrap() };
+    let old_size = tdata.size;
+    tdata.size = proc_size;
     trapframe.epc = elf.entry as usize;
     trapframe.sp = stack_pointer;
     

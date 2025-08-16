@@ -15,7 +15,7 @@ use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
 use crate::trap;
 
-use super::{Process, elf};
+use super::{Task, elf};
 
 pub type SysResult = Result<usize, ()>;
 
@@ -49,7 +49,7 @@ pub trait Syscall {
     fn sys_gittid(&mut self) -> SysResult;
 }
 
-impl Syscall for Process {
+impl Syscall for Task {
     fn sys_thread_create(&mut self) -> SysResult {
         let entry = self.arg_raw(0);
         let arg = self.arg_raw(1);
@@ -89,7 +89,7 @@ impl Syscall for Process {
             }
             let mut parent_map = unsafe { PROC_MANAGER.parents.lock() };
                         
-            let channel = self as *const Process as usize;
+            let channel = self as *const Task as usize;
             self.sleep(channel, parent_map);
             parent_map = unsafe { PROC_MANAGER.parents.lock() };
         }
@@ -128,7 +128,7 @@ impl Syscall for Process {
                     //self.yielding();
                     let mut parent_map = PROC_MANAGER.parents.lock();
                         
-                    let channel = self as *const Process as usize;
+                    let channel = self as *const Task as usize;
                     self.sleep(channel, parent_map);
                     parent_map = PROC_MANAGER.parents.lock();
                 }; 
@@ -169,8 +169,8 @@ impl Syscall for Process {
         let addr_fdwrite = pipefds_addr+mem::size_of::<u32>();
 
         // alloc fd
-        let pdata = self.data.get_mut();
-        let (fd_read, fd_write) = pdata.alloc_fd2().ok_or(())?;
+        let tdata = self.data.get_mut();
+        let (fd_read, fd_write) = tdata.alloc_fd2().ok_or(())?;
 
         // alloc pipe
         let (file_read, file_write) = Pipe::create().ok_or(())?;
@@ -178,12 +178,12 @@ impl Syscall for Process {
         // transfer fd to user
         let fd_read_u32: u32 = fd_read.try_into().unwrap();
         let fd_write_u32: u32 = fd_write.try_into().unwrap();
-        pdata.copy_out(&fd_read_u32 as *const u32 as *const u8, addr_fdread, mem::size_of::<u32>())?;
-        pdata.copy_out(&fd_write_u32 as *const u32 as *const u8, addr_fdwrite, mem::size_of::<u32>())?;
+        tdata.copy_out(&fd_read_u32 as *const u32 as *const u8, addr_fdread, mem::size_of::<u32>())?;
+        tdata.copy_out(&fd_write_u32 as *const u32 as *const u8, addr_fdwrite, mem::size_of::<u32>())?;
 
         // assign the file to process
-        pdata.open_files[fd_read].replace(file_read);
-        pdata.open_files[fd_write].replace(file_write);
+        tdata.open_files[fd_read].replace(file_read);
+        tdata.open_files[fd_write].replace(file_write);
 
         #[cfg(feature = "trace_syscall")]
         println!("[{}].pipe(addr={:#x}) = ok, fd=[{},{}]", self.excl.lock().pid, pipefds_addr, fd_read, fd_write);

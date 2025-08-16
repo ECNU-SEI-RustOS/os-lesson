@@ -57,7 +57,7 @@ pub enum ProcState {
 ///
 /// 该结构体保存进程的调度状态、退出码、等待通道及进程标识符等信息，
 /// 通常由进程的排它锁保护，确保并发环境下的安全访问与修改。
-pub struct ProcExcl {
+pub struct TaskExcl {
     /// 进程当前的状态，类型为 [`ProcState`]，反映进程生命周期阶段。
     pub state: ProcState,
     /// 进程退出时的状态码，用于父进程获取子进程退出信息。
@@ -71,7 +71,7 @@ pub struct ProcExcl {
 }
 
 
-impl ProcExcl {
+impl TaskExcl {
     const fn new() -> Self {
         Self {
             state: ProcState::UNUSED,
@@ -95,7 +95,7 @@ impl ProcExcl {
 ///
 /// 该结构体仅在当前进程运行时访问，或在持有 [`ProcExcl`] 锁的其他进程（例如 fork）
 /// 初始化时访问。包含内核栈指针、内存大小、上下文、打开的文件、用户页表等私有资源。
-pub struct ProcData {
+pub struct TaskData {
     /// 进程内核栈的起始虚拟地址。
     kstack: usize,
     ///  用户栈起始基地址。
@@ -117,7 +117,7 @@ pub struct ProcData {
 }
 
 
-impl ProcData {
+impl TaskData {
     const fn new() -> Self {
         Self {
             kstack: 0,
@@ -409,7 +409,7 @@ impl ProcData {
     }
 }
 
-/// 进程结构体，代表操作系统内核中的一个进程实体。
+/// Task结构体，代表操作系统内核中的一个任务实体和一个线程（区分主线程和子线程）。
 ///
 /// 该结构体封装了进程在进程表中的索引，
 /// 进程状态的排它锁保护数据（`ProcExcl`），
@@ -417,32 +417,32 @@ impl ProcData {
 /// 以及进程是否被杀死的原子标志。
 ///
 /// 通过该结构体，操作系统能够管理进程调度、状态更新和资源访问的并发安全。
-pub struct Process {
+pub struct Task {
     /// 在任务表中的索引，唯一标识该进程槽位。
     index: usize,
     /// 是否为子线程
     pub is_child_task: bool,
-    /// 进程排它锁保护的状态信息，包括状态、pid、等待通道等。
-    pub excl: SpinLock<ProcExcl>,
-    /// 进程私有数据，包含内存、上下文、文件描述符等，通过 UnsafeCell 实现内部可变性。
-    pub data: UnsafeCell<ProcData>,
+    /// 任务排它锁保护的状态信息，包括状态、pid、等待通道等。
+    pub excl: SpinLock<TaskExcl>,
+    /// 任务私有数据，包含内存、上下文、文件描述符等，通过 UnsafeCell 实现内部可变性。
+    pub data: UnsafeCell<TaskData>,
     /// 子线程
-    pub tasks: SpinLock<Vec<Option<*mut Process>>>,
+    pub tasks: SpinLock<Vec<Option<*mut Task>>>,
     /// 父主线程
-    pub parent: Option<*mut Process>,
+    pub parent: Option<*mut Task>,
     /// 锁
     pub mutex: SpinLock<Vec<SpinLock<usize>>>,
     /// 标识进程是否被杀死的原子布尔变量，用于调度和信号处理。
     pub killed: AtomicBool,
 }
 
-impl Process {
+impl Task {
     pub const fn new(index: usize, is_child_task: bool) -> Self {
         Self {
             index,
             is_child_task,
-            excl: SpinLock::new(ProcExcl::new(), "ProcExcl"),
-            data: UnsafeCell::new(ProcData::new()),
+            excl: SpinLock::new(TaskExcl::new(), "ProcExcl"),
+            data: UnsafeCell::new(TaskData::new()),
             tasks: SpinLock::new(Vec::new(), "tasks"),
             parent: None,
             mutex: SpinLock::new(Vec::new(), "mutex locks"),
@@ -482,15 +482,15 @@ impl Process {
     ///   调用者需确保 `tf` 和 `name` 字段有效且可写。
     /// - 假定当前调用环境下独占访问 `ProcData`，避免数据竞争。
     pub fn user_init(&mut self) {
-        let pdata = self.data.get_mut();
+        let tdata = self.data.get_mut();
 
         // map initcode in user pagetable
-        unsafe { pdata.pagetable.unwrap().as_mut().unwrap().uvm_init(&INITCODE); }
-        pdata.ustack_base = PAGE_SIZE;
-        pdata.size = PAGE_SIZE;
+        unsafe { tdata.pagetable.unwrap().as_mut().unwrap().uvm_init(&INITCODE); }
+        tdata.ustack_base = PAGE_SIZE;
+        tdata.size = PAGE_SIZE;
 
         // prepare return pc and stack pointer
-        let trapframe = unsafe { pdata.trapframe.as_mut().unwrap() };
+        let trapframe = unsafe { tdata.trapframe.as_mut().unwrap() };
         trapframe.epc = 0;
         trapframe.sp = PAGE_SIZE * 10;
 
@@ -498,13 +498,13 @@ impl Process {
         unsafe {
             ptr::copy_nonoverlapping(
                 init_name.as_ptr(), 
-                pdata.name.as_mut_ptr(),
+                tdata.name.as_mut_ptr(),
                 init_name.len()
             );
         }
 
-        debug_assert!(pdata.cwd.is_none());
-        pdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
+        debug_assert!(tdata.cwd.is_none());
+        tdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
 
         
     }
@@ -523,7 +523,7 @@ impl Process {
 
                         let mut parent_map = PROC_MANAGER.parents.lock();
                         
-                        let channel = self as *const Process as usize;
+                        let channel = self as *const Task as usize;
                         self.sleep(channel, parent_map);
                         parent_map = PROC_MANAGER.parents.lock();
                     }; 
@@ -547,7 +547,7 @@ impl Process {
 
                     let mut parent_map = PROC_MANAGER.parents.lock();
                         
-                    let channel = self as *const Process as usize;
+                    let channel = self as *const Task as usize;
                     self.sleep(channel, parent_map);
                     parent_map = PROC_MANAGER.parents.lock();
                 }; 
@@ -658,7 +658,7 @@ impl Process {
         let mut guard = self.excl.lock();
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
-        PROCFIFO.lock().add(self as *const Process);
+        PROCFIFO.lock().add(self as *const Task);
         guard = unsafe { CPU_MANAGER.my_cpu_mut().sched(guard,
             self.data.get_mut().get_context()) };
         drop(guard);
@@ -760,16 +760,16 @@ impl Process {
     fn fork(&mut self) -> Result<usize, ()> {
         // 为便于后续代码编写，确保fork市当前进程中只有主线程
         assert!(self.tasks.lock().len() == 0);
-        let pdata = self.data.get_mut();
+        let tdata = self.data.get_mut();
         let child = unsafe { PROC_MANAGER.alloc_proc().ok_or(())? };
         let mut cexcl = child.excl.lock();
         let cpid = cexcl.pid;
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
-        cdata.ustack_base = pdata.ustack_base;
+        cdata.ustack_base = tdata.ustack_base;
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
-        let size = pdata.size;
-        if unsafe { pdata.pagetable.unwrap().as_mut().unwrap().uvm_copy(cpgt.as_mut().unwrap(), size).is_err() } {
+        let size = tdata.size;
+        if unsafe { tdata.pagetable.unwrap().as_mut().unwrap().uvm_copy(cpgt.as_mut().unwrap(), size).is_err() } {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
             cdata.cleanup(cpid,false);
@@ -780,16 +780,16 @@ impl Process {
 
         // clone trapframe and return 0 on a0
         unsafe {
-            ptr::copy_nonoverlapping(pdata.trapframe, cdata.trapframe, 1);
+            ptr::copy_nonoverlapping(tdata.trapframe, cdata.trapframe, 1);
             cdata.trapframe.as_mut().unwrap().a0 = 0;
         }
 
         // clone opened files and cwd
-        cdata.open_files.clone_from(&pdata.open_files);
-        cdata.cwd.clone_from(&pdata.cwd);
+        cdata.open_files.clone_from(&tdata.open_files);
+        cdata.cwd.clone_from(&tdata.cwd);
         
         // copy process name
-        cdata.name.copy_from_slice(&pdata.name);
+        cdata.name.copy_from_slice(&tdata.name);
 
         let cpid = cexcl.pid;
 
@@ -801,7 +801,7 @@ impl Process {
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
 
-        PROCFIFO.lock().add(child as *const Process);
+        PROCFIFO.lock().add(child as *const Task);
     
         Ok(cpid)
     }
@@ -809,13 +809,13 @@ impl Process {
     fn thread_create(&mut self, entry: usize, arg: usize) -> Result<usize, ()> {
         let pos = self.tasks.lock().len() + 1;
         assert!(pos < MAX_TASKS_PER_PROC);
-        let process_ptr = self as *const Process;
+        let process_ptr = self as *const Task;
         let process_data = self.data.get_mut();
         let child_task = unsafe { PROC_MANAGER.alloc_task(process_ptr).ok_or(())? };
         child_task.is_child_task = true;
 
         let child_tid = child_task.excl.lock().tid;
-        child_task.parent = Some(process_ptr as *mut Process);
+        child_task.parent = Some(process_ptr as *mut Task);
 
         
         let cdata = unsafe { child_task.data.get().as_mut().unwrap() };
@@ -863,14 +863,14 @@ impl Process {
         drop(cexcl);
         drop(cdata);
 
-        self.tasks.lock().push(Some(child_task as * mut Process));
-        PROCFIFO.lock().add(child_task as *const Process);
+        self.tasks.lock().push(Some(child_task as * mut Task));
+        PROCFIFO.lock().add(child_task as *const Task);
 
         Ok(child_tid)
     }
 }
 
-impl Process {
+impl Task {
     /// # 功能说明
     /// 从当前进程的 TrapFrame 中获取第 `n` 个系统调用参数的原始值（usize 类型）。
     /// 系统调用参数通过寄存器 a0~a5 传递，`n` 指定参数索引（0 到 5）。
