@@ -774,6 +774,69 @@ impl Process {
     
         Ok(cpid)
     }
+
+    fn thread_create(&mut self, entry: usize, arg: usize) -> Result<usize, ()> {
+        let pos = self.tasks.lock().len() + 1;
+        assert!(pos < MAX_TASKS_PER_PROC);
+        let process_ptr = self as *const Process;
+        let process_data = self.data.get_mut();
+        let child_task = unsafe { PROC_MANAGER.alloc_task(process_ptr).ok_or(())? };
+        child_task.is_child_task = true;
+
+        let child_tid = child_task.excl.lock().tid;
+        child_task.parent = Some(process_ptr as *mut Process);
+
+        
+        let cdata = unsafe { child_task.data.get().as_mut().unwrap() };
+        // 分配子线程的trapframe
+        cdata.pagetable = process_data.pagetable.clone();
+       
+        let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize};
+        match unsafe { cdata.pagetable.unwrap().as_mut().unwrap() }
+                    .map_pages(
+                        VirtAddr::from(trapframe_from_tid(child_tid)),
+                        PAGE_SIZE,
+                        PhysAddr::try_from(ctrapframe).unwrap(),
+                        PteFlag::R | PteFlag::W,
+                    ) {
+            Ok(_) => {},
+            Err(_) => {panic!("memory not enough")},
+        };
+        cdata.trapframe = ctrapframe as _;
+
+
+        cdata.size = process_data.size;
+
+        cdata.open_files.clone_from(&process_data.open_files);
+        cdata.cwd.clone_from(&process_data.cwd);
+        
+        // copy process name
+        cdata.name.copy_from_slice(&process_data.name);
+
+
+        debug_assert!(cdata.pagetable == process_data.pagetable);
+        let mut cexcl = child_task.excl.lock();
+        let child_tid = cexcl.tid;
+        cexcl.state = ProcState::RUNNABLE;
+
+        // 准备ustack
+        let ustack_base = cdata.ustack_base;
+        cdata.ustack_base = ustack_base;
+        let ctrapframe = unsafe { cdata.trapframe.as_mut().unwrap() };
+        ctrapframe.a0 = arg;
+        ctrapframe.epc = entry;
+        ctrapframe.sp = ustack_bottom_by_pos(ustack_base, pos) + USER_STACK_SIZE;
+        // set context
+        cdata.init_context();
+    
+        drop(cexcl);
+        drop(cdata);
+
+        self.tasks.lock().push(Some(child_task as * mut Process));
+        PROCFIFO.lock().add(child_task as *const Process);
+
+        Ok(child_tid)
+    }
 }
 
 impl Process {
