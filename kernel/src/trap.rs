@@ -95,10 +95,10 @@ pub unsafe fn user_trap_ret() -> ! {
 
     // let pf;
     //let the current process prepare for the sret
-    let (satp,pid) = {
+    let (satp,tid) = {
         let pdata = CPU_MANAGER.my_proc().data.get_mut();
-        let pid = CPU_MANAGER.my_proc().excl.lock().pid;
-        (pdata.user_ret_prepare(), pid)
+        let tid = CPU_MANAGER.my_proc().excl.lock().tid;
+        (pdata.user_ret_prepare(), tid)
     };
     //call userret with virtual address
     extern "C" {
@@ -108,7 +108,7 @@ pub unsafe fn user_trap_ret() -> ! {
     let distance = userret as usize - trampoline as usize;
     let userret_virt: extern "C" fn(usize, usize) -> ! =
         core::mem::transmute(Into::<usize>::into(TRAMPOLINE) + distance);
-    userret_virt(trapframe_from_pid(pid).into(), satp);
+    userret_virt(trapframe_from_tid(tid).into(), satp);
 }
 
 /// Used to handle kernel space's trap
