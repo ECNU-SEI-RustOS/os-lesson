@@ -15,9 +15,8 @@ use crate::mm::{
 };
 use crate::process::proc::manager::ProcessFIFO;
 use crate::process::proc::pid::PID_ALLOCATOR;
-use crate::process::proc::TaskData;
-use crate::process::task::trapframe_from_tid;
 use crate::process::task::tid::TID_ALLOCATOR;
+use crate::process::task::trapframe_from_tid;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
 pub use cpu::{pop_off, push_off};
@@ -27,6 +26,7 @@ pub use proc::Task;
 mod context;
 mod cpu;
 mod proc;
+pub mod sync;
 pub mod task;
 pub mod trapframe;
 
@@ -386,23 +386,20 @@ impl ProcManager {
     ///   保证了修改操作的线程安全。
     /// - 调用者必须保证调用时未持有任何进程锁，避免潜在死锁。
     pub fn wakeup(&self, channel: usize) {
-        for process in self.table.iter() {
-            if process.is_child_task {
-                continue;
-            }
-            let mut guard = process.excl.lock();
+        for task in self.table.iter() {
+            let mut guard = task.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
-                PROCFIFO.lock().add(process as *const Task);
+                PROCFIFO.lock().add(task as *const Task);
             }
             drop(guard);
         }
     }
 
     pub fn task_wakeup(&self, parent: *mut Task) {
-        let parent= unsafe { parent.as_mut().unwrap() };
+        let parent = unsafe { parent.as_mut().unwrap() };
         let mut guard = parent.excl.lock();
-        if guard.state == ProcState::SLEEPING && guard.channel == parent as *const Task as usize {
+        if guard.state == ProcState::SLEEPING {
             guard.state = ProcState::RUNNABLE;
             PROCFIFO.lock().add(parent as *const Task);
         }
@@ -481,16 +478,16 @@ impl ProcManager {
         if exit_index == self.init_proc {
             panic!("init process exiting");
         }
-        let process = &self.table[exit_index];
+        let exiting_task = &self.table[exit_index] as *const Task;
+        let exiting_task = unsafe { (exiting_task as *mut Task).as_mut().unwrap() };
         // 检测是否有未执行完的子线程
         loop {
             let mut is_over = true;
-            for task in process.tasks.lock().iter_mut() {
+            for task in exiting_task.tasks.lock().iter_mut() {
                 if let Some(task) = task {
-                    
                     let task = unsafe { task.as_mut().unwrap() };
 
-                    let state =  task.excl.lock().state;
+                    let state = task.excl.lock().state;
                     if state != ProcState::ZOMBIE {
                         is_over = false;
                         break;
@@ -504,18 +501,33 @@ impl ProcManager {
             }
         }
         // 清理child tasks
-        while let Some(task) = process.tasks.lock().pop() {
+        while let Some(task) = exiting_task.tasks.lock().pop() {
             let task = unsafe { task.unwrap().as_mut().unwrap() };
+            unsafe {
+                exiting_task
+                    .data
+                    .get_mut()
+                    .pagetable
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .uvm_unmap(trapframe_from_tid(task.excl.lock().tid).into(), 1, false)
+            };
+
             task.data.get_mut().cleanup(task.excl.lock().tid, true);
             task.excl.lock().cleanup();
+            task.parent = None;
             task.is_child_task = false;
-            drop(task);
         }
+        while let Some(sem) = exiting_task.semaphore_list.lock().pop() {
+            drop(sem);
+        }
+
         unsafe {
-            process.data.get().as_mut().unwrap().close_files();
+            exiting_task.data.get().as_mut().unwrap().close_files();
         }
-        let pid = process.excl.lock().pid;
-        let tid = process.excl.lock().tid;
+        let pid = exiting_task.excl.lock().pid;
+        let tid = exiting_task.excl.lock().tid;
         let mut parent_map = self.parents.lock();
 
         // Set the children's parent to init process.
@@ -566,18 +578,6 @@ impl ProcManager {
         }
         let tid = self.table[exit_index].excl.lock().tid;
         let parent = unsafe { self.table[exit_index].parent.unwrap().as_mut().unwrap() };
-        unsafe {
-            parent
-                .data
-                .get_mut()
-                .pagetable
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .uvm_unmap(trapframe_from_tid(tid).into(), 1, false)
-        };
-
-
 
         TID_ALLOCATOR.lock().tid_dealloc(tid);
         let mut exit_pexcl = self.table[exit_index].excl.lock();
@@ -585,7 +585,6 @@ impl ProcManager {
         exit_pexcl.state = ProcState::ZOMBIE;
         drop(exit_pexcl);
         self.task_wakeup(parent as *mut Task);
-        self.table[exit_index].parent = None;
         unsafe {
             let mut exit_pexcl = self.table[exit_index].excl.lock();
             let exit_ctx = self.table[exit_index]
@@ -598,7 +597,6 @@ impl ProcManager {
         }
 
         unreachable!("exiting {}", exit_index);
-        todo!();
     }
     /// # 功能说明
     ///
