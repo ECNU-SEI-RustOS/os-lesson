@@ -487,53 +487,47 @@ impl PageTable {
     pub fn dealloc_proc_pagetable(&mut self, proc_size: usize, tid: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
         self.uvm_unmap(trapframe_from_tid(tid).into(), 1, false);
-        //self.uvm_unmap(ustack_bottom_from_pid(1).into(), 4, false);
         // free physical memory
         if proc_size > 0 {
             self.uvm_unmap(0, pg_round_up(proc_size)/PAGE_SIZE, true);
         }
     }
-        /// 根据当前线程数量和ustack_base分配用户栈
+    /// 根据当前线程数量和ustack_base分配用户栈
     /// # 返回值
     /// - `Ok(usize)`：返回实际分配后的ustack(栈向下生长)起始位置（字节）。
-    pub fn uvm_alloc_ustack(&mut self, ustack_base: usize, pos: usize) -> Result<usize, &str> {
-        if pos >= MAX_TASKS_PER_PROC {
-            return Err("too many tasks");
-        }
-        let ustack_top = ustack_bottom_by_pos(ustack_base, pos);
-        let ustack_bottom = ustack_top - USER_STACK_SIZE;
+    // pub fn uvm_alloc_ustack(&mut self, ustack_base: usize, pos: usize) -> Result<usize, &str> {
+    //     if pos >= MAX_TASKS_PER_PROC {
+    //         return Err("too many tasks");
+    //     }
+    //     let ustack_top = ustack_bottom_by_pos(ustack_base, pos);
+    //     let ustack_bottom = ustack_top - USER_STACK_SIZE;
 
-        for vaddr in (ustack_bottom..ustack_top).step_by(PAGE_SIZE) {
-            match unsafe { RawSinglePage::try_new_zeroed() } {
-                Err(_) => return Err("no enough physical memory"),
-                Ok(mem) => {
-                    match self.map_pages(
-                        unsafe { VirtAddr::from_raw(vaddr) },
-                        PAGE_SIZE,
-                        unsafe { PhysAddr::from_raw(mem as usize) },
-                        PteFlag::R | PteFlag::W | PteFlag::U,
-                    ) {
-                        Err(s) => {
-                            unsafe {
-                                RawSinglePage::from_raw_and_drop(mem);
-                            }
-                            return Err("no enough virtual memory");
-                        }
-                        Ok(_) => {
-                            // the mem raw pointer is leaked
-                            // but recorded in the pagetable at virtual address cur_size
-                        }
-                    }
-                }
-            }
-        }
-        Ok(ustack_top)
-    }
-    pub fn dealloc_ustack_by_pos(&mut self, ustack_base: usize, pos: usize) {
-        let ustack_top = ustack_bottom_by_pos(ustack_base, pos);
-        let ustack_bottom = ustack_top - USER_STACK_SIZE;
-        self.uvm_unmap(ustack_bottom, 4, false);
-    }
+    //     for vaddr in (ustack_bottom..ustack_top).step_by(PAGE_SIZE) {
+    //         match unsafe { RawSinglePage::try_new_zeroed() } {
+    //             Err(_) => return Err("no enough physical memory"),
+    //             Ok(mem) => {
+    //                 match self.map_pages(
+    //                     unsafe { VirtAddr::from_raw(vaddr) },
+    //                     PAGE_SIZE,
+    //                     unsafe { PhysAddr::from_raw(mem as usize) },
+    //                     PteFlag::R | PteFlag::W | PteFlag::U,
+    //                 ) {
+    //                     Err(s) => {
+    //                         unsafe {
+    //                             RawSinglePage::from_raw_and_drop(mem);
+    //                         }
+    //                         return Err("no enough virtual memory");
+    //                     }
+    //                     Ok(_) => {
+    //                         // the mem raw pointer is leaked
+    //                         // but recorded in the pagetable at virtual address cur_size
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     Ok(ustack_top)
+    // }
 
     /// # 功能说明
     /// 初始化进程用户空间的第一个内存页（代码页），  
