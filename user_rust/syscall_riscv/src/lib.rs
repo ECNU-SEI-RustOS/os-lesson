@@ -44,7 +44,19 @@ const SYSCALL_THREAD_CREATE: usize = 24;
 const SYSCALL_THREAD_COUNT: usize = 25;
 const SYSCALL_THREAD_WAITTID: usize = 26;
 const SYSCALL_GETTID: usize = 27;
+const SYSCALL_SEMAPHORE_CREATE: usize = 28;
+const SYSCALL_SEMAPHORE_UP: usize = 29;
+const SYSCALL_SEMAPHORE_DOWN: usize = 30;
 
+pub fn sys_semaphore_create(count: usize) -> isize {
+    syscall(SYSCALL_SEMAPHORE_CREATE, [count,0,0,0,0,0])
+}
+pub fn sys_semaphore_up(pos: usize) -> isize {
+    syscall(SYSCALL_SEMAPHORE_UP, [pos,0,0,0,0,0])
+}
+pub fn sys_semaphore_down(pos: usize) -> isize {
+    syscall(SYSCALL_SEMAPHORE_DOWN, [pos,0,0,0,0,0])
+}
 pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     syscall(SYSCALL_THREAD_CREATE, [entry,arg,0,0,0,0])
 }
