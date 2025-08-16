@@ -74,11 +74,11 @@ impl Bcache {
         let mut ctrl = self.ctrl.lock();
         let len = ctrl.inner.len();
 
-        // init the head and tail of the lru list
+        // 初始化 LRU 列表的头部和尾部
         ctrl.head = &mut ctrl.inner[0];
         ctrl.tail = &mut ctrl.inner[len-1];
 
-        // init prev and next field
+        // 初始化 prev 和 next 字段
         ctrl.inner[0].prev = ptr::null_mut();
         ctrl.inner[0].next = &mut ctrl.inner[1];
         ctrl.inner[len-1].prev = &mut ctrl.inner[len-2];
@@ -88,7 +88,7 @@ impl Bcache {
             ctrl.inner[i].next = &mut ctrl.inner[i+1];
         }
         
-        // init index
+        // 初始化索引
         ctrl.inner.iter_mut()
             .enumerate()
             .for_each(|(i, b)| b.index = i);
@@ -127,10 +127,10 @@ impl Bcache {
     fn bget(&self, dev: u32, blockno: u32) -> Buf<'_> {
         let mut ctrl = self.ctrl.lock();
 
-        // find cached block
+        // 查找缓存块
         match ctrl.find_cached(dev, blockno) {
             Some((index, rc_ptr)) => {
-                // found
+                // 找到
                 drop(ctrl);
                 Buf {
                     index,
@@ -141,8 +141,8 @@ impl Bcache {
                 }
             }
             None => {
-                // not cached
-                // recycle the least recently used (LRU) unused buffer
+                // 未缓存
+                // 回收最近最少使用（LRU）的未使用缓冲区
                 match ctrl.recycle(dev, blockno) {
                     Some((index, rc_ptr)) => {
                         self.bufs[index].valid.store(false, Ordering::Relaxed);
@@ -258,13 +258,13 @@ impl<'a> Buf<'a> {
         DISK.rw(self, true);
     }
 
-    /// Gives out a raw const pointer at the buf data. 
+    /// 提供指向缓冲区数据的原始常量指针。
     pub fn raw_data(&self) -> *const BufData {
         let guard = self.data.as_ref().unwrap();
         guard.deref()
     }
 
-    /// Gives out a raw mut pointer at the buf data. 
+    /// 提供指向缓冲区数据的原始可变指针。
     pub fn raw_data_mut(&mut self) -> *mut BufData {
         let guard = self.data.as_mut().unwrap();
         guard.deref_mut()
@@ -476,19 +476,19 @@ impl BufLru {
         let b = &mut self.inner[index];
         b.refcnt -= 1;
         if b.refcnt == 0 && !ptr::eq(self.head, b) {
-            // forward the tail if b is at the tail
-            // b may be the only entry in the lru list
+            // 若 b 位于尾部，则前移尾部
+            // b 可能是 lru 列表中唯一的条目
             if ptr::eq(self.tail, b) && !b.prev.is_null() {
                 self.tail = b.prev;
             }
             
-            // detach b
+            // 分离 b
             unsafe {
                 b.next.as_mut().map(|b_next| b_next.prev = b.prev);
                 b.prev.as_mut().map(|b_prev| b_prev.next = b.next);
             }
 
-            // attach b
+            // 附加 b
             b.prev = ptr::null_mut();
             b.next = self.head;
             unsafe {
@@ -587,8 +587,7 @@ impl BufInner {
     }
 }
 
-/// Alignment of BufData should suffice for other structs
-/// that might converts from this struct.
+/// BufData 的对齐方式应足以满足可能由此结构体转换而来的其他结构体的需求。
 #[repr(C, align(8))]
 pub struct BufData([u8; BSIZE]);
 
