@@ -407,22 +407,34 @@ impl ProcData {
 ///
 /// 通过该结构体，操作系统能够管理进程调度、状态更新和资源访问的并发安全。
 pub struct Process {
-    /// 进程在进程表中的索引，唯一标识该进程槽位。
+    /// 在任务表中的索引，唯一标识该进程槽位。
     index: usize,
+    /// 是否为子线程
+    pub is_child_task: bool,
     /// 进程排它锁保护的状态信息，包括状态、pid、等待通道等。
     pub excl: SpinLock<ProcExcl>,
     /// 进程私有数据，包含内存、上下文、文件描述符等，通过 UnsafeCell 实现内部可变性。
     pub data: UnsafeCell<ProcData>,
+    /// 子线程
+    pub tasks: SpinLock<Vec<Option<*mut Process>>>,
+    /// 父主线程
+    pub parent: Option<*mut Process>,
+    /// 锁
+    pub mutex: SpinLock<Vec<SpinLock<usize>>>,
     /// 标识进程是否被杀死的原子布尔变量，用于调度和信号处理。
     pub killed: AtomicBool,
 }
 
 impl Process {
-    pub const fn new(index: usize) -> Self {
+    pub const fn new(index: usize, is_child_task: bool) -> Self {
         Self {
             index,
+            is_child_task,
             excl: SpinLock::new(ProcExcl::new(), "ProcExcl"),
             data: UnsafeCell::new(ProcData::new()),
+            tasks: SpinLock::new(Vec::new(), "tasks"),
+            parent: None,
+            mutex: SpinLock::new(Vec::new(), "mutex locks"),
             killed: AtomicBool::new(false),
         }
     }
