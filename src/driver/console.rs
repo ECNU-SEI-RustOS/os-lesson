@@ -10,20 +10,47 @@ use crate::process::{CPU_MANAGER, PROC_MANAGER};
 
 use super::uart;
 
-// SAFETY: Called only once in rmain.rs:rust_main.
+/// 初始化控制台驱动
+///
+/// # 功能说明
+/// 调用底层UART驱动进行初始化
+///
+/// # 安全性
+/// - 必须仅在系统启动时调用一次
+/// - 调用位置：`rmain.rs:rust_main`
 pub unsafe fn init() {
     uart::init();
 }
 
-/// Read from console `tot` bytes to `dst`,
-/// which might be a virtual or kernel [`Address`].
+/// 从控制台读取数据
+///
+/// # 功能说明
+/// 从控制台缓冲区读取最多`tot`字节到目标地址：
+/// 1. 当缓冲区无数据时阻塞进程
+/// 2. 处理特殊控制字符（EOF, 换行等）
+/// 3. 支持用户空间和内核空间地址
+///
+/// # 参数
+/// - `dst`: 目标地址（用户/内核空间）
+/// - `tot`: 请求读取的字节数
+///
+/// # 返回值
+/// - `Ok(n)`: 实际读取的字节数
+/// - `Err(())`: 进程被终止时返回错误
+///
+/// # 处理流程
+/// 1. 获取控制台锁
+/// 2. 当缓冲区为空时阻塞进程
+/// 3. 从环形缓冲区读取字符
+/// 4. 处理特殊字符（EOF, 换行）
+/// 5. 复制字符到目标地址
 pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
     let mut console = CONSOLE.lock();
 
     let mut left = tot;
     while left > 0 {
-        // if no available data in console buf
-        // wait until the console device write some data
+        // 如果控制台缓冲区中没有可用数据
+        // 等待直到控制台设备写入一些数据
         while console.ri == console.wi {
             let p = unsafe { CPU_MANAGER.my_proc() };
             if p.killed.load(Ordering::Relaxed) {
@@ -33,12 +60,12 @@ pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
             console = CONSOLE.lock();
         }
 
-        // read
+        // 读取
         let c = console.buf[console.ri.0 % CONSOLE_BUF];
         console.ri += Wrapping(1);
 
-        // encounter EOF
-        // return earlier
+        // 遇到 EOF
+        // 提前返回
         if c == CTRL_EOT {
             if left < tot {
                 console.ri -= Wrapping(1);
@@ -46,16 +73,16 @@ pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
             break;
         }
 
-        // copy to user/kernel space memory
+        // 复制到用户 / 内核空间内存
         if dst.copy_out(&c as *const u8, 1).is_err() {
             break;
         }
 
-        // update
+        // 更新
         dst = dst.offset(1);
         left -= 1;
 
-        // encounter a line feed
+        // 遇到换行符
         if c == CTRL_LF {
             break;
         }
@@ -64,8 +91,20 @@ pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
     Ok(tot - left)
 }
 
-/// Write to console `tot` bytes from `src`,
-/// which might be a virtual or kernel [`Address`].
+/// 向控制台写入数据
+///
+/// # 功能说明
+/// 从源地址读取`tot`字节输出到控制台：
+/// 1. 逐字节读取并输出
+/// 2. 支持用户空间和内核空间地址
+///
+/// # 参数
+/// - `src`: 源地址（用户/内核空间）
+/// - `tot`: 请求写入的字节数
+///
+/// # 返回值
+/// - `Ok(n)`: 实际写入的字节数
+/// - 部分写入时返回已写入字节数
 pub(super) fn write(mut src: Address, tot: u32) -> Result<u32, ()> {
     for i in 0..tot {
         let mut c = 0u8;
@@ -78,7 +117,15 @@ pub(super) fn write(mut src: Address, tot: u32) -> Result<u32, ()> {
     Ok(tot)
 }
 
-/// Put a single character to console.
+/// 向控制台输出单个字符
+///
+/// # 功能说明
+/// 处理特殊退格字符：
+/// - 退格键(CTRL+H)：输出"空格+退格"实现擦除效果
+/// - 其他字符：直接输出
+///
+/// # 参数
+/// - `c`: 要输出的字符
 pub(crate) fn putc(c: u8) {
     if c == CTRL_BS {
         uart::putc_sync(CTRL_BS);
@@ -89,12 +136,22 @@ pub(crate) fn putc(c: u8) {
     }
 }
 
-/// The console interrupt handler.
-/// The normal routine is:
-/// 1. user input;
-/// 2. uart handle interrupt;
-/// 3. console handle interrupt;
-/// 4. console echo back input or do extra controlling.
+/// 控制台中断处理程序
+///
+/// # 功能说明
+/// 处理UART接收到的字符：
+/// 1. 特殊控制字符处理（进程列表、删除行等）
+/// 2. 普通字符回显和缓冲区管理
+/// 3. 唤醒等待输入的进程
+///
+/// # 处理流程
+/// 1. 用户输入字符
+/// 2. UART触发中断
+/// 3. 控制台处理中断
+/// 4. 回显输入或执行控制操作
+///
+/// # 参数
+/// - `c`: 接收到的字符
 pub(super) fn intr(c: u8) {
     let mut console = CONSOLE.lock();
 
@@ -117,7 +174,7 @@ pub(super) fn intr(c: u8) {
             }
         }
         _ => {
-            // echo back
+            // 回显
             if c != 0 && (console.ei - console.ri).0 < CONSOLE_BUF {
                 let c = if c == CTRL_CR { CTRL_LF } else { c };
                 putc(c);
@@ -145,10 +202,10 @@ static CONSOLE: SpinLock<Console> = SpinLock::new(
 
 struct Console {
     buf: [u8; CONSOLE_BUF],
-    // read index
+    // 读索引
     ri: Wrapping<usize>,
-    // write index
+    // 写索引
     wi: Wrapping<usize>,
-    // edit index
+    // 编辑索引
     ei: Wrapping<usize>,
 }
