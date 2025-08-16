@@ -435,16 +435,41 @@ impl ProcManager {
         if exit_index == self.init_proc {
             panic!("init process exiting");
         }
+        let process = &self.table[exit_index];
+        // 检测是否有未执行完的子线程
+        loop {
+            let mut is_over = true;
+            for task in process.tasks.lock().iter_mut() {
+                if let Some(task) = task {
+                    
+                    let task = unsafe { task.as_mut().unwrap() };
 
-        unsafe {
-            self.table[exit_index]
-                .data
-                .get()
-                .as_mut()
-                .unwrap()
-                .close_files();
+                    let state =  task.excl.lock().state;
+                    if state != ProcState::ZOMBIE {
+                        is_over = false;
+                        break;
+                    }
+                }
+            }
+            if is_over {
+                break;
+            } else {
+                return;
+            }
         }
-        let pid = self.table[exit_index].excl.lock().pid;
+        // 清理child tasks
+        while let Some(task) = process.tasks.lock().pop() {
+            let task = unsafe { task.unwrap().as_mut().unwrap() };
+            task.data.get_mut().cleanup(task.excl.lock().tid, true);
+            task.excl.lock().cleanup();
+            task.is_child_task = false;
+            drop(task);
+        }
+        unsafe {
+            process.data.get().as_mut().unwrap().close_files();
+        }
+        let pid = process.excl.lock().pid;
+        let tid = process.excl.lock().tid;
         let mut parent_map = self.parents.lock();
 
         // Set the children's parent to init process.
@@ -466,16 +491,16 @@ impl ProcManager {
 
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
+
         exit_pexcl.state = ProcState::ZOMBIE;
-        let epdata= self.table[exit_index].data.get();
-        let pdata = unsafe {&mut *(epdata as *mut ProcData) };
-        // while let Some(item) = pdata.tasks.pop(){
-        //     drop(item);
-        // }
+        let epdata = self.table[exit_index].data.get();
+        let pdata = unsafe { &mut *(epdata as *mut ProcData) };
 
         PID_ALLOCATOR.lock().pid_dealloc(pid);
+        TID_ALLOCATOR.lock().tid_dealloc(tid);
         //kinfo!("[kernel] process exit successfully with exit_code {}",exit_status);
         drop(parent_map);
+
         unsafe {
             let exit_ctx = self.table[exit_index]
                 .data
@@ -489,6 +514,47 @@ impl ProcManager {
         unreachable!("exiting {}", exit_index);
     }
 
+    /// 子线程退出
+    fn child_thread_exiting(&mut self, exit_index: usize, exit_status: i32) {
+        if exit_index == self.init_proc {
+            panic!("init process exiting");
+        }
+        let tid = self.table[exit_index].excl.lock().tid;
+        let parent = unsafe { self.table[exit_index].parent.unwrap().as_mut().unwrap() };
+        unsafe {
+            parent
+                .data
+                .get_mut()
+                .pagetable
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .uvm_unmap(trapframe_from_tid(tid).into(), 1, false)
+        };
+
+
+
+        TID_ALLOCATOR.lock().tid_dealloc(tid);
+        let mut exit_pexcl = self.table[exit_index].excl.lock();
+        exit_pexcl.exit_status = exit_status;
+        exit_pexcl.state = ProcState::ZOMBIE;
+        drop(exit_pexcl);
+        self.task_wakeup(parent as *mut Process);
+        self.table[exit_index].parent = None;
+        unsafe {
+            let mut exit_pexcl = self.table[exit_index].excl.lock();
+            let exit_ctx = self.table[exit_index]
+                .data
+                .get()
+                .as_mut()
+                .unwrap()
+                .get_context();
+            CPU_MANAGER.my_cpu_mut().sched(exit_pexcl, exit_ctx);
+        }
+
+        unreachable!("exiting {}", exit_index);
+        todo!();
+    }
     /// # 功能说明
     ///
     /// 父进程等待其任一子进程退出（进入 ZOMBIE 状态）。
