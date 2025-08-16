@@ -1,19 +1,20 @@
+use alloc::rc::Rc;
 use alloc::vec::{self, Vec};
 use array_macro::array;
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::option::Option;
 use core::ptr;
 use core::cell::UnsafeCell;
-use crate::consts::KERNEL_STACK_SIZE;
-use crate::process::proc::manager::{add_task, ProcessFIFO};
-use crate::process::task::task::Task;
+use crate::consts::{KERNEL_STACK_SIZE, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
+use crate::mm::pagetable::ustack_bottom_by_pos;
+use crate::process::task::task::trapframe_from_tid;
+use crate::process::task::tid::TID_ALLOCATOR;
 use crate::process::PROCFIFO;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
-use crate::mm::{PageTable, RawPage, RawSinglePage};
+use crate::mm::{PageTable, PhysAddr, PteFlag, RawPage, RawSinglePage, VirtAddr};
 use crate::register::{satp, sepc, sstatus};
 use crate::spinlock::{SpinLock, SpinLockGuard};
 use crate::trap::user_trap;
@@ -65,6 +66,8 @@ pub struct ProcExcl {
     pub channel: usize,
     /// 进程的唯一标识符（进程ID）。
     pub pid: usize,
+    /// 线程号
+    pub tid: usize
 }
 
 
@@ -75,6 +78,7 @@ impl ProcExcl {
             exit_status: 0,
             channel: 0,
             pid: 0,
+            tid: 0
         }
     }
 
@@ -107,7 +111,7 @@ pub struct ProcData {
     /// 指向 TrapFrame 的裸指针，保存用户态寄存器临时值等信息。
     pub trapframe: *mut TrapFrame,
     /// 进程的用户页表，管理用户地址空间映射。
-    pub pagetable: Option<Box<PageTable>>,
+    pub pagetable: Option<*mut PageTable>,
     /// 进程当前工作目录的 inode。
     pub cwd: Option<Inode>,
 }
@@ -212,7 +216,7 @@ impl ProcData {
         // restore the user pc previously stored in sepc
         sepc::write(trapframe.epc);
 
-        self.pagetable.as_ref().unwrap().as_satp()
+        unsafe { self.pagetable.unwrap().as_mut().unwrap().as_satp() }
     }
     // pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
     //     let task = &self.tasks[0].as_ref().unwrap();
@@ -245,7 +249,7 @@ impl ProcData {
     /// 实际操作会转发调用到页表的对应方法。
     #[inline]
     pub fn copy_out(&mut self, src: *const u8, dst: usize, count: usize) -> Result<(), ()> {
-        self.pagetable.as_mut().unwrap().copy_out(src, dst, count)
+        unsafe { self.pagetable.unwrap().as_mut().unwrap().copy_out(src, dst, count)}
     }
 
     /// 将内容从用户的源虚拟地址 src 复制到内核空间的目标地址 dst。
@@ -253,7 +257,7 @@ impl ProcData {
     /// 实际操作会转发调用到页表的对应方法。
     #[inline]
     pub fn copy_in(&self, src: usize, dst: *mut u8, count: usize) -> Result<(), ()> {
-        self.pagetable.as_ref().unwrap().copy_in(src, dst, count)
+        unsafe { self.pagetable.unwrap().as_mut().unwrap().copy_in(src, dst, count)}
     }
 
     /// 分配一个新的文件描述符。
@@ -305,18 +309,25 @@ impl ProcData {
     /// - 该函数包含不安全代码，依赖于 `tf` 指针的有效性和唯一所有权。
     /// - 调用者必须确保在进程数据被其他代码访问之前调用此函数，避免资源竞争。
     /// - 释放页表时必须保证当前进程内存映射处于可安全释放状态，避免悬挂指针。
-    pub fn cleanup(&mut self, pid: usize) {
+    pub fn cleanup(&mut self, tid: usize, is_child_task: bool) {
         self.name[0] = 0;
         let tf = self.trapframe;
         self.trapframe = ptr::null_mut();
         if !tf.is_null() {
             unsafe { RawSinglePage::from_raw_and_drop(tf as *mut u8); }
         }
-        let pgt = self.pagetable.take();
-        if let Some(mut pgt) = pgt {
-            pgt.dealloc_proc_pagetable(self.size, pid);
+        if !is_child_task{
+            let pgt = self.pagetable.take();
+            if let Some(mut pgt) = pgt {
+                let mut pgt = unsafe {
+                    pgt.as_mut().unwrap()
+                };
+                pgt.dealloc_proc_pagetable(self.size, tid);
+            }
+            self.size = 0;
+        } else {
+            self.pagetable.take();
         }
-        self.size = 0;
     }
 
     /// # 功能说明
@@ -387,11 +398,11 @@ impl ProcData {
         let old_size = self.size;
         if increment > 0 {
             let new_size = old_size + (increment as usize);
-            self.pagetable.as_mut().unwrap().uvm_alloc(old_size, new_size)?;
+            unsafe { self.pagetable.unwrap().as_mut().unwrap().uvm_alloc(old_size, new_size)? };
             self.size = new_size;
         } else if increment < 0 {
             let new_size = old_size - ((-increment) as usize);
-            self.pagetable.as_mut().unwrap().uvm_dealloc(old_size, new_size);
+            unsafe { self.pagetable.unwrap().as_mut().unwrap().uvm_dealloc(old_size, new_size) };
             self.size = new_size;
         }
         Ok(old_size)
@@ -474,7 +485,7 @@ impl Process {
         let pdata = self.data.get_mut();
 
         // map initcode in user pagetable
-        pdata.pagetable.as_mut().unwrap().uvm_init(&INITCODE);
+        unsafe { pdata.pagetable.unwrap().as_mut().unwrap().uvm_init(&INITCODE); }
         pdata.ustack_base = PAGE_SIZE;
         pdata.size = PAGE_SIZE;
 
@@ -502,7 +513,22 @@ impl Process {
     /// the killed flag is true
     pub fn check_abondon(&mut self, exit_status: i32) {
         if self.killed.load(Ordering::Relaxed) {
-            unsafe { PROC_MANAGER.exiting(self.index, exit_status); }
+            if self.is_child_task {
+                unsafe { PROC_MANAGER.child_thread_exiting(self.index, exit_status); }
+            } else {
+                unsafe { 
+                    loop{
+                        PROC_MANAGER.exiting(self.index, exit_status);
+                        //self.yielding();
+
+                        let mut parent_map = PROC_MANAGER.parents.lock();
+                        
+                        let channel = self as *const Process as usize;
+                        self.sleep(channel, parent_map);
+                        parent_map = PROC_MANAGER.parents.lock();
+                    }; 
+                }
+            }
         }
     }
 
@@ -586,7 +612,10 @@ impl Process {
             21 => self.sys_close(),
             22 => self.sys_getmtime(),
             23 => self.sys_waitpid(),
-            99 => self.sys_test(),
+            24 => self.sys_thread_create(),
+            25 => self.sys_thread_count(),
+            26 => self.sys_thread_waittid(),
+            27 => self.sys_gittid(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }
@@ -740,10 +769,10 @@ impl Process {
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
         let size = pdata.size;
-        if pdata.pagetable.as_mut().unwrap().uvm_copy(cpgt, size).is_err() {
+        if unsafe { pdata.pagetable.unwrap().as_mut().unwrap().uvm_copy(cpgt.as_mut().unwrap(), size).is_err() } {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
-            cdata.cleanup(cpid);
+            cdata.cleanup(cpid,false);
             cexcl.cleanup();
             return Err(())
         }
@@ -952,7 +981,7 @@ impl Process {
     fn arg_str(&mut self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
         let addr: usize = self.arg_raw(n);
         let pagetable = unsafe { self.data.get().as_ref().unwrap().pagetable.as_ref().unwrap() };
-        pagetable.copy_in_str(addr, buf)?;
+        unsafe { pagetable.as_mut().unwrap().copy_in_str(addr, buf)? };
         Ok(())
     }
 
@@ -1004,7 +1033,7 @@ impl Process {
     /// Fetch a null-nullterminated string from virtual address `addr` into the kernel buffer.
     fn fetch_str(&self, addr: usize, dst: &mut [u8]) -> Result<(), &'static str>{
         let pd = unsafe { self.data.get().as_ref().unwrap() };
-        pd.pagetable.as_ref().unwrap().copy_in_str(addr, dst)
+        unsafe { pd.pagetable.unwrap().as_ref().unwrap().copy_in_str(addr, dst) }
     }
 }
 
