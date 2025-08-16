@@ -120,7 +120,7 @@ impl Pipe {
     /// - 用户空间地址 `addr` 的有效性由 `copy_out()` 检查与处理；
     /// - 锁的获取、释放、睡眠与唤醒操作在受控环境中调用，确保不会造成死锁或竞态。
     pub(super) fn read(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let process = unsafe { CPU_MANAGER.my_proc() };
+        let process = unsafe { CPU_MANAGER.my_task() };
 
         let mut pipe = self.0.lock();
 
@@ -186,7 +186,7 @@ impl Pipe {
     /// - 锁操作、进程休眠与唤醒在管道内部状态一致性前提下安全使用；
     /// - 写入操作严格限制在环形缓冲区有效索引范围内，避免越界访问。
     pub(super) fn write(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let process = unsafe { CPU_MANAGER.my_proc() };
+        let process = unsafe { CPU_MANAGER.my_task() };
 
         let mut pipe = self.0.lock();
 

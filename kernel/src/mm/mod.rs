@@ -98,7 +98,7 @@ impl Address {
     pub fn copy_out(self, src: *const u8, count: usize) -> Result<(), ()> {
         match self {
             Self::Virtual(dst) => {
-                let process = unsafe { CPU_MANAGER.my_proc() };
+                let process = unsafe { CPU_MANAGER.my_task() };
                 process.data.get_mut().copy_out(src, dst, count)
             },
             Self::Kernel(dst) => {
@@ -116,7 +116,7 @@ impl Address {
     pub fn copy_in(self, dst: *mut u8, count: usize) -> Result<(), ()> {
         match self {
             Self::Virtual(src) => {
-                let process = unsafe { CPU_MANAGER.my_proc() };
+                let process = unsafe { CPU_MANAGER.my_task() };
                 process.data.get_mut().copy_in(src, dst, count)
             },
             Self::Kernel(src) => {

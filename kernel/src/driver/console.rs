@@ -25,7 +25,7 @@ pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
         // if no available data in console buf
         // wait until the console device write some data
         while console.ri == console.wi {
-            let process = unsafe { CPU_MANAGER.my_proc() };
+            let process = unsafe { CPU_MANAGER.my_task() };
             if process.killed.load(Ordering::Relaxed) {
                 return Err(())
             }

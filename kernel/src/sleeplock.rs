@@ -34,7 +34,7 @@ impl<T: ?Sized> SleepLock<T> {
         let mut guard = self.lock.lock();
         while self.locked.get() {
             unsafe {
-                CPU_MANAGER.my_proc().sleep(self.locked.as_ptr() as usize, guard);
+                CPU_MANAGER.my_task().sleep(self.locked.as_ptr() as usize, guard);
             }
             guard = self.lock.lock();
         }

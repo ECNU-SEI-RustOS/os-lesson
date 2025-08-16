@@ -636,7 +636,7 @@ impl ProcManager {
     ///   需保证唤醒机制和锁释放顺序正确避免死锁。
     fn waiting(&self, pi: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let task = unsafe { CPU_MANAGER.my_proc() };
+        let task = unsafe { CPU_MANAGER.my_task() };
         let tdata = unsafe { task.data.get().as_mut().unwrap() };
 
         loop {
@@ -685,7 +685,7 @@ impl ProcManager {
     }
     fn waiting_pid(&self, current_pid: usize, child_pid: usize, addr: usize) -> Result<usize, ()> {
         let mut parent_map = self.parents.lock();
-        let task = unsafe { CPU_MANAGER.my_proc() };
+        let task = unsafe { CPU_MANAGER.my_task() };
         let tdata = unsafe { task.data.get().as_mut().unwrap() };
         let mut child_index = 0usize;
         for i in 0..NPROC {
@@ -797,7 +797,7 @@ unsafe fn fork_ret() -> ! {
     static mut INITIALIZED: bool = false;
 
     // Still holding p->lock from scheduler
-    CPU_MANAGER.my_proc().excl.unlock();
+    CPU_MANAGER.my_task().excl.unlock();
 
     if !INITIALIZED {
         INITIALIZED = true;

@@ -86,18 +86,18 @@ impl CpuManager {
     ///   调用者必须保证当前 CPU 的 `proc` 指针有效且唯一持有，
     ///   否则可能导致数据竞争或未定义行为。
     /// - 由于返回了可变引用，必须确保调用者不会引入别名可变引用。
-    pub fn my_proc(&self) -> &mut Task {
-        let process;
+    pub fn my_task(&self) -> &mut Task {
+        let task;
         push_off();
         unsafe {
             let cpu = self.my_cpu();
-            if cpu.process.is_none() {
+            if cpu.task.is_none() {
                 panic!("my_proc(): no process running");
             }
-            process = cpu.process.unwrap();
+            task = cpu.task.unwrap();
         }
         pop_off();
-        unsafe { &mut *process }
+        unsafe { &mut *task }
     }
 
 
@@ -155,7 +155,7 @@ impl CpuManager {
                 res
             } {
                 Some(process) => {
-                    cpu.process = Some(process as _);
+                    cpu.task = Some(process as _);
                     let process = process as *mut Task;
                     let task = &mut *process;
                     let mut guard = task.excl.lock();
@@ -164,10 +164,10 @@ impl CpuManager {
                     let new_context = task.data.get_mut().get_context();
 
                     switch(old_context, new_context);
-                    if cpu.process.is_none() {
+                    if cpu.task.is_none() {
                         panic!("context switch back with no process reference");
                     }
-                    cpu.process = None;
+                    cpu.task = None;
                     drop(guard);
                 }
                 None => {}
@@ -187,7 +187,7 @@ impl CpuManager {
 pub struct Cpu {
     /// 当前在该 CPU 上运行的进程的裸指针。
     /// 如果没有运行进程，则为 null。
-    process: Option<*mut Task>,
+    task: Option<*mut Task>,
 
     /// 调度器上下文，用于保存调度器自身的寄存器状态，
     /// 在进程切换时作为切换目标上下文。
@@ -205,7 +205,7 @@ pub struct Cpu {
 impl Cpu {
     const fn new() -> Self {
         Self {
-            process: None,
+            task: None,
             scheduler: Context::new(),
             noff: 0,
             intena: false,
@@ -305,16 +305,16 @@ impl Cpu {
     /// - 锁机制保证并发安全，避免进程状态被竞态修改。
     ///
     pub fn try_yield_proc(&mut self) {
-        if !self.process.is_none() {
+        if !self.task.is_none() {
             let process;
             let guard = unsafe {
-                process = &mut *self.process.unwrap();
+                process = &mut *self.task.unwrap();
                 process.excl.lock()
             };
             if guard.state == ProcState::RUNNING {
                 drop(guard);
                 unsafe {
-                    let process = &mut *self.process.unwrap();
+                    let process = &mut *self.task.unwrap();
                     process.excl.lock();
                     process.yielding();
                 }

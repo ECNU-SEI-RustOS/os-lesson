@@ -32,7 +32,7 @@ pub unsafe extern fn user_trap() {
     extern "C" {fn kernelvec();}
     stvec::write(kernelvec as usize);
 
-    let process = CPU_MANAGER.my_proc();
+    let task = CPU_MANAGER.my_task();
 
     let scause = Scause::read();
 
@@ -52,7 +52,7 @@ pub unsafe extern fn user_trap() {
                 plic::complete(irq);
             }
 
-            process.check_abondon(-1);
+            task.check_abondon(-1);
         }
         Trap::Interrupt(scause::Interrupt::SupervisorSoft) => {
             // software interrupt from a machine-mode timer interrupt,
@@ -66,18 +66,18 @@ pub unsafe extern fn user_trap() {
             sip::clear_ssip();
 
             // give up the cpu
-            process.check_abondon(-1);
-            process.yielding();
+            task.check_abondon(-1);
+            task.yielding();
         }
         Trap::Exception(scause::Exception::UserEnvCall)=> {
-            process.check_abondon(-1);
-            process.syscall();
-            process.check_abondon(-1);
+            task.check_abondon(-1);
+            task.syscall();
+            task.check_abondon(-1);
         }
         _ => {
             println!("scause {:?}", scause.cause());
             println!("sepc={:#x} stval={:#x}", sepc::read(), stval::read());
-            process.abondon(-1);
+            task.abondon(-1);
         }
     }
 
@@ -96,8 +96,8 @@ pub unsafe fn user_trap_ret() -> ! {
     // let pf;
     //let the current process prepare for the sret
     let (satp,tid) = {
-        let tdata = CPU_MANAGER.my_proc().data.get_mut();
-        let tid = CPU_MANAGER.my_proc().excl.lock().tid;
+        let tdata = CPU_MANAGER.my_task().data.get_mut();
+        let tid = CPU_MANAGER.my_task().excl.lock().tid;
         (tdata.user_ret_prepare(), tid)
     };
     //call userret with virtual address
