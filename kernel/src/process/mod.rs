@@ -13,11 +13,13 @@ use crate::fs;
 use crate::mm::{
     kvm_map, PageTable, PhysAddr, PteFlag, RawPage, RawQuadPage, RawSinglePage, VirtAddr,
 };
+use crate::process::proc::manager::ProcessFIFO;
 use crate::process::proc::pid::PID_ALLOCATOR;
 use crate::process::proc::ProcData;
+use crate::process::task::task::trapframe_from_tid;
+use crate::process::task::tid::TID_ALLOCATOR;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;
-use crate::process::proc::manager::ProcessFIFO;
 pub use cpu::{pop_off, push_off};
 pub use cpu::{CpuManager, CPU_MANAGER};
 pub use proc::Process;
@@ -25,8 +27,8 @@ pub use proc::Process;
 mod context;
 mod cpu;
 mod proc;
-pub mod trapframe;
 pub mod task;
+pub mod trapframe;
 
 use context::Context;
 use proc::ProcState;
@@ -80,10 +82,9 @@ pub struct ProcManager {
 
     /// 全局进程 ID 分配器，负责分配唯一的 PID，受自旋锁保护以保证并发安全。
     pid: SpinLock<usize>,
-
 }
 
-lazy_static!{
+lazy_static! {
     /// 可运行进程FIFO队列
     pub static ref PROCFIFO: SpinLock<ProcessFIFO> = SpinLock::new(ProcessFIFO::new(), "pid");
 }
@@ -91,7 +92,7 @@ lazy_static!{
 impl ProcManager {
     const fn new() -> Self {
         Self {
-            table: array![i => Process::new(i); NPROC],
+            table: array![i => Process::new(i,false); NPROC],
             parents: SpinLock::new(array![_ => None; NPROC], "proc parents"),
             init_proc: 0,
             pid: SpinLock::new(0, "pid"),
@@ -203,8 +204,6 @@ impl ProcManager {
     /// - 分配陷阱帧时使用了 `unsafe`，调用 `RawSinglePage::try_new_zeroed()`，
     ///   需要保证底层内存分配正确且有效。
     fn alloc_proc(&mut self) -> Option<&mut Process> {
-        
-
         for process in self.table.iter_mut() {
             let mut guard = process.excl.lock();
             match guard.state {
@@ -214,10 +213,13 @@ impl ProcManager {
                     let pdata = process.data.get_mut();
 
                     // alloc trapframe
-                    pdata.trapframe = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    pdata.trapframe =
+                        unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
                     let new_pid = PID_ALLOCATOR.lock().pid_alloc();
+                    let new_tid = TID_ALLOCATOR.lock().tid_alloc();
                     debug_assert!(pdata.pagetable.is_none());
-                    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, new_pid) {
+
+                    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, new_tid) {
                         Some(pgt) => pdata.pagetable = Some(pgt),
                         None => {
                             unsafe {
@@ -228,6 +230,7 @@ impl ProcManager {
                     }
                     pdata.init_context();
                     guard.pid = new_pid;
+                    guard.tid = new_tid;
                     guard.state = ProcState::ALLOCATED;
 
                     drop(guard);
@@ -384,6 +387,9 @@ impl ProcManager {
     /// - 调用者必须保证调用时未持有任何进程锁，避免潜在死锁。
     pub fn wakeup(&self, channel: usize) {
         for process in self.table.iter() {
+            if process.is_child_task {
+                continue;
+            }
             let mut guard = process.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
@@ -391,6 +397,16 @@ impl ProcManager {
             }
             drop(guard);
         }
+    }
+
+    pub fn task_wakeup(&self, parent: *mut Process) {
+        let parent= unsafe { parent.as_mut().unwrap() };
+        let mut guard = parent.excl.lock();
+        if guard.state == ProcState::SLEEPING && guard.channel == parent as *const Process as usize {
+            guard.state = ProcState::RUNNABLE;
+            PROCFIFO.lock().add(parent as *const Process);
+        }
+        drop(guard);
     }
 
     /// # 功能说明
@@ -637,6 +653,7 @@ impl ProcManager {
                     continue;
                 }
                 let child_pid = child_excl.pid;
+                let child_tid = child_excl.tid;
                 if addr != 0
                     && pdata
                         .copy_out(
@@ -652,7 +669,7 @@ impl ProcManager {
                 self.table[i].killed.store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[i].data.get().as_mut().unwrap() };
 
-                child_data.cleanup(child_pid);
+                child_data.cleanup(child_tid, false);
                 child_excl.cleanup();
                 return Ok(child_pid);
             }
@@ -673,7 +690,7 @@ impl ProcManager {
         let pdata = unsafe { process.data.get().as_mut().unwrap() };
         let mut child_index = 0usize;
         for i in 0..NPROC {
-            if self.table[i].excl.lock().pid == child_pid  {
+            if self.table[i].excl.lock().pid == child_pid {
                 child_index = i;
                 break;
             }
@@ -715,16 +732,18 @@ impl ProcManager {
                 }
 
                 parent_map[child_index].take();
-                self.table[child_index].killed.store(false, Ordering::Relaxed);
+                self.table[child_index]
+                    .killed
+                    .store(false, Ordering::Relaxed);
                 let child_data = unsafe { self.table[child_index].data.get().as_mut().unwrap() };
-                child_data.cleanup(child_pid);
+                child_data.cleanup(child_pid, false);
                 child_excl.cleanup();
                 drop(child_excl);
                 return Ok(child_pid);
             }
         }
     }
-    
+
     /// # 功能说明
     ///
     /// 根据给定的进程标识符（PID）杀死对应的进程。
