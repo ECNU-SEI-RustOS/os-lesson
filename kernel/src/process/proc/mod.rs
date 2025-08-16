@@ -12,7 +12,7 @@ use crate::mm::pagetable::ustack_bottom_by_pos;
 use crate::mm::{PageTable, PhysAddr, PteFlag, RawPage, RawSinglePage, VirtAddr};
 use crate::process::sync::sem::Semaphore;
 use crate::process::task::trapframe_from_tid;
-use crate::process::PROCFIFO;
+use crate::process::TaskFifo;
 use crate::register::{satp, sepc, sstatus};
 use crate::spinlock::{SpinLock, SpinLockGuard};
 use crate::trap::user_trap;
@@ -459,7 +459,7 @@ pub struct Task {
     pub parent: Option<*mut Task>,
     /// 锁
     pub semaphore_list: SpinLock<Vec<Option<Semaphore>>>,
-    /// 标识进程（主线程）是否被杀死的原子布尔变量，用于调度和信号处理。
+    /// 标识（主线程）是否被杀死的原子布尔变量，用于调度和信号处理。
     pub killed: AtomicBool,
 }
 
@@ -697,7 +697,7 @@ impl Task {
         let mut guard = self.excl.lock();
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
-        PROCFIFO.lock().add(self as *const Task);
+        TaskFifo.lock().add(self as *const Task);
         guard = unsafe {
             CPU_MANAGER
                 .my_cpu_mut()
@@ -851,7 +851,7 @@ impl Task {
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
 
-        PROCFIFO.lock().add(child as *const Task);
+        TaskFifo.lock().add(child as *const Task);
 
         Ok(cpid)
     }
@@ -912,7 +912,7 @@ impl Task {
         drop(cdata);
 
         self.tasks.lock().push(Some(child_task as *mut Task));
-        PROCFIFO.lock().add(child_task as *const Task);
+        TaskFifo.lock().add(child_task as *const Task);
 
         Ok(child_tid)
     }

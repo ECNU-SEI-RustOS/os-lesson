@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 
 use super::{proc::TaskExcl, Context, ProcState, Task, PROC_MANAGER};
 use crate::consts::NCPU;
-use crate::process::PROCFIFO;
+use crate::process::TaskFifo;
 use crate::register::{sstatus, tp};
 use crate::spinlock::SpinLockGuard;
 
@@ -152,7 +152,7 @@ impl CpuManager {
 
             // use ProcManager to find a runnable process
             match {
-                let res = PROCFIFO.lock().fetch();
+                let res = TaskFifo.lock().fetch();
                 res
             } {
                 Some(task) => {

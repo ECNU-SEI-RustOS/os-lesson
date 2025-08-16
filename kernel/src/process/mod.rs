@@ -54,7 +54,7 @@ use trapframe::TrapFrame;
 /// # 使用限制
 /// - 仅初始化一次，由第一个 CPU 核心调用 `proc_init` 和 `user_init` 进行初始化。
 /// - 后续所有对进程（主线程）管理的操作都通过此结构体进行。
-pub static mut PROC_MANAGER: ProcManager = ProcManager::new();
+pub static mut PROC_MANAGER: TaskManager = TaskManager::new();
 
 /// 任务管理器（Task Manager）
 ///
@@ -69,27 +69,27 @@ pub static mut PROC_MANAGER: ProcManager = ProcManager::new();
 ///
 /// 并发控制方面，通过自旋锁保护父进程（主线程）关系和 PID 计数器，
 /// 但访问整个进程（主线程）表本身未加锁，使用时需注意并发安全。
-pub struct ProcManager {
-    /// 进程（主线程）表，存放系统中所有的进程（主线程）结构体，数量固定为 `NPROC`。
+pub struct TaskManager {
+    /// 任务表，存放系统中所有的任务结构体，数量固定为 `NPROC`。
     table: [Task; NPROC],
 
-    /// 进程（主线程）父子关系映射表，索引为子进程（主线程），值为对应父进程（主线程）的索引。
+    /// 任务（主线程）父子关系映射表，索引为子进程（主线程），值为对应父进程（主线程）的索引。
     /// 受自旋锁保护以保证多线程环境下的安全访问。
     parents: SpinLock<[Option<usize>; NPROC]>,
 
-    /// 初始进程（主线程）在进程（主线程）表中的索引，通常为 0，代表系统启动后的第一个进程（主线程）。
+    /// 初始任务（主线程）在任务表中的索引，通常为 0，代表系统启动后的第一个任务（主线程）。
     init_proc: usize,
 
-    /// 全局进程（主线程） ID 分配器，负责分配唯一的 PID，受自旋锁保护以保证并发安全。
+    /// 全局进程 ID 分配器，负责分配唯一的 PID，受自旋锁保护以保证并发安全。
     pid: SpinLock<usize>,
 }
 
 lazy_static! {
     /// 可运行进程（主线程）FIFO队列
-    pub static ref PROCFIFO: SpinLock<TaskFIFO> = SpinLock::new(TaskFIFO::new(), "pid");
+    pub static ref TaskFifo: SpinLock<TaskFIFO> = SpinLock::new(TaskFIFO::new(), "pid");
 }
 
-impl ProcManager {
+impl TaskManager {
     const fn new() -> Self {
         Self {
             table: array![i => Task::new(i,false); NPROC],
@@ -349,7 +349,7 @@ impl ProcManager {
         task.user_init();
         let mut guard = task.excl.lock();
         guard.state = ProcState::RUNNABLE;
-        PROCFIFO.lock().add(task as *const Task);
+        TaskFifo.lock().add(task as *const Task);
     }
 
     /// 检查给定的进程（主线程）是否是init
@@ -390,7 +390,7 @@ impl ProcManager {
             let mut guard = task.excl.lock();
             if guard.state == ProcState::SLEEPING && guard.channel == channel {
                 guard.state = ProcState::RUNNABLE;
-                PROCFIFO.lock().add(task as *const Task);
+                TaskFifo.lock().add(task as *const Task);
             }
             drop(guard);
         }
@@ -401,7 +401,7 @@ impl ProcManager {
         let mut guard = parent.excl.lock();
         if guard.state == ProcState::SLEEPING {
             guard.state = ProcState::RUNNABLE;
-            PROCFIFO.lock().add(parent as *const Task);
+            TaskFifo.lock().add(parent as *const Task);
         }
         drop(guard);
     }
