@@ -8,7 +8,7 @@ use crate::process::proc::manager::add_task;
 use crate::process::PROCFIFO;
 use crate::{consts::MAX_TASKS_PER_PROC, mm::pagetable::ustack_bottom_by_pos, process::task::task::Task};
 use crate::{consts::{MAXARG, MAXARGLEN, MAXVA, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
-use crate::mm::{Address, PageTable, Addr, VirtAddr, pg_round_up};
+use crate::mm::{pg_round_up, Addr, Address, PageTable, RawPage, RawSinglePage, VirtAddr};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 
 use super::Process;
@@ -94,18 +94,20 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     }
 
     let pid = process.excl.lock().pid;
-    let process_ptr = process as *mut Process;
+    let tid = process.excl.lock().tid;
     // allocate new pagetable, not assign to proc yet
     let pdata = process.data.get_mut();
-    let mut pgt;
-    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, pid) {
+    let pgt;
+    match PageTable::alloc_proc_pagetable(pdata.trapframe as usize, tid) {
         Some(res) => pgt = res,
         None => {
             drop(idata); drop(inode); LOG.end_op();
             return Err("mem not enough")
         },
     }
-
+    let pgt = unsafe {
+        pgt.as_mut().unwrap()
+    };
     let mut proc_size = 0usize;
 
     // load each program section
@@ -114,8 +116,12 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     for _ in 0..elf.phnum {
         let mut ph = MaybeUninit::<ProgHeader>::uninit();
         if idata.iread(Address::KernelMut(ph.as_mut_ptr() as *mut u8), off, ph_size).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
-            drop(pgt); drop(idata); drop(inode); LOG.end_op();
+            pgt.dealloc_proc_pagetable(proc_size,tid);
+            pgt.clean();
+            unsafe {
+                RawSinglePage::from_raw_and_drop(pgt as *mut _ as *mut u8);
+            }
+            drop(idata); drop(inode); LOG.end_op();
             return Err("cannot read elf program header")
         }
         let ph = unsafe { ph.assume_init() };
@@ -126,23 +132,35 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
         }
 
         if ph.memsz < ph.filesz || ph.vaddr + ph.memsz < ph.vaddr || ph.vaddr % (PAGE_SIZE as u64) != 0 {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
-            drop(pgt); drop(idata); drop(inode); LOG.end_op();
+            pgt.dealloc_proc_pagetable(proc_size,tid);
+            pgt.clean();
+            unsafe {
+                RawSinglePage::from_raw_and_drop(pgt as *mut _ as *mut u8);
+            }
+            drop(idata); drop(inode); LOG.end_op();
             return Err("one program header meta not correct")
         }
 
         match pgt.uvm_alloc(proc_size, (ph.vaddr + ph.memsz) as usize) {
             Ok(cur_size) => proc_size = cur_size,
             Err(_) => {
-                pgt.dealloc_proc_pagetable(proc_size,pid);
-                drop(pgt); drop(idata); drop(inode); LOG.end_op();
+                pgt.dealloc_proc_pagetable(proc_size,tid);
+                pgt.clean();
+                unsafe {
+                    RawSinglePage::from_raw_and_drop(pgt as *mut _ as *mut u8);
+                }
+                drop(idata); drop(inode); LOG.end_op();
                 return Err("not enough uvm for program header")
             }
         }
 
-        if load_seg(pgt.as_mut(), ph.vaddr as usize, &mut idata, ph.off as u32, ph.filesz as u32).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
-            drop(pgt); drop(idata); drop(inode); LOG.end_op();
+        if load_seg(pgt, ph.vaddr as usize, &mut idata, ph.off as u32, ph.filesz as u32).is_err() {
+            pgt.dealloc_proc_pagetable(proc_size,tid);
+            pgt.clean();
+            unsafe {
+                RawSinglePage::from_raw_and_drop(pgt as *mut _ as *mut u8);
+            }
+            drop(idata); drop(inode); LOG.end_op();
             return Err("load program section error")
         }
 
@@ -156,23 +174,23 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     // one for usage, the other for guarding
     proc_size = pg_round_up(proc_size);
     // 准备最多1个线程空间（后续可以优化）
-    pdata.set_ustack_base(proc_size);
+    
     let ustack_base = proc_size;
-
+    pdata.ustack_base = ustack_base;
+    
     match pgt.uvm_alloc(proc_size,  proc_size + MAX_TASKS_PER_PROC*(USER_STACK_SIZE + PAGE_SIZE)) {
         Ok(ret_size) => proc_size = ret_size,
         Err(_) => {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
+            pgt.dealloc_proc_pagetable(proc_size,tid);
             return Err("not enough uvm for user stack")
         },
     }
     for i in 1..=MAX_TASKS_PER_PROC {
         pgt.uvm_clear(proc_size - i*(USER_STACK_SIZE + PAGE_SIZE));
     }
-    let first_task_ustack_bottom: usize= ustack_bottom_by_pos(pdata.ustack_base, 1);
+    let first_task_ustack_bottom = ustack_bottom_by_pos(pdata.ustack_base, 1);
     let mut stack_pointer = first_task_ustack_bottom + USER_STACK_SIZE;
     let stack_base = first_task_ustack_bottom;
-
     // prepare command line content in the user stack
     let argc = argv.len();
     debug_assert!(argc < MAXARG);
@@ -184,11 +202,11 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
         stack_pointer -= count;
         stack_pointer = align_sp(stack_pointer);
         if stack_pointer < stack_base {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
+            pgt.dealloc_proc_pagetable(proc_size,tid);
             return Err("cmd args too much for stack")
         }
         if pgt.copy_out(arg_slice.as_ptr(), stack_pointer, count).is_err() {
-            pgt.dealloc_proc_pagetable(proc_size,pid);
+            pgt.dealloc_proc_pagetable(proc_size,tid);
             return Err("copy cmd args to pagetable go wrong")
         }
         ustack[i] = stack_pointer;
@@ -198,11 +216,11 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     stack_pointer -= (argc+1) * mem::size_of::<usize>();
     stack_pointer = align_sp(stack_pointer);
     if stack_pointer < stack_base {
-        pgt.dealloc_proc_pagetable(proc_size,pid);
+        pgt.dealloc_proc_pagetable(proc_size,tid);
         return Err("cmd args too much for stack")
     }
     if pgt.copy_out(ustack.as_ptr() as *const u8, stack_pointer, (argc+1)*mem::size_of::<usize>()).is_err() {
-        pgt.dealloc_proc_pagetable(proc_size,pid);
+        pgt.dealloc_proc_pagetable(proc_size,tid);
         return Err("copy cmd args to pagetable go wrong")
     }
 
@@ -216,7 +234,7 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     }
 
 
-    let mut old_pgt = pdata.pagetable.replace(pgt).unwrap();
+    let old_pgt = unsafe { pdata.pagetable.replace(pgt).unwrap().as_mut().unwrap() };
     let old_size = pdata.size;
     pdata.size = proc_size;
     trapframe.epc = elf.entry as usize;
@@ -226,8 +244,12 @@ pub fn load(process: &mut Process, path: &[u8], argv: &[Option<Box<[u8; MAXARGLE
     //add_task(Arc::clone(&task));
     
     // 清理旧的pagetable
-    old_pgt.dealloc_proc_pagetable(old_size,pid);
-    drop(old_pgt);
+    old_pgt.dealloc_proc_pagetable(old_size,tid);
+    //drop(unsafe { Box::from_raw(old_pgt as *mut PageTable) });
+    old_pgt.clean();
+    unsafe {
+        RawSinglePage::from_raw_and_drop(old_pgt as *mut _ as *mut u8);
+    }
 
     Ok(argc)
 }
