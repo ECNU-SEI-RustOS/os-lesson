@@ -239,7 +239,37 @@ impl ProcManager {
 
         None
     }
+    pub fn alloc_task(&mut self, parent: *const Process) -> Option<&mut Process> {
+        for process in self.table.iter_mut() {
+            let mut guard = process.excl.lock();
+            match guard.state {
+                ProcState::UNUSED => {
+                    process.is_child_task = true;
+                    // holding the process's excl lock,
+                    // so manager can modify its private data
+                    let pdata = process.data.get_mut();
 
+                    // alloc trapframe
+                    pdata.trapframe =
+                        unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
+                    let new_tid = TID_ALLOCATOR.lock().tid_alloc();
+                    debug_assert!(pdata.pagetable.is_none());
+
+                    pdata.init_context();
+                    guard.pid = unsafe { parent.as_ref().unwrap().excl.lock().pid };
+                    guard.tid = new_tid;
+
+                    guard.state = ProcState::ALLOCATED;
+
+                    drop(guard);
+                    return Some(process);
+                }
+                _ => drop(guard),
+            }
+        }
+
+        None
+    }
     /// # 功能说明
     ///
     /// 在进程表中查找第一个状态为 `RUNNABLE` 的进程，
