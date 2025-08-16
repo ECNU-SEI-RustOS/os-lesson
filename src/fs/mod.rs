@@ -9,9 +9,9 @@ mod bio;
 mod block;
 mod superblock;
 
-// TODO - Buf also could?
+// TODO - Buf 也可以?
 pub use bio::Buf;
-// TODO - could be reduced to use xxx after removing usage from rmain.rs
+// TODO - 在从 rmain.rs 中移除用法后，可简化为使用 xxx
 pub use bio::BCACHE;
 pub use inode::{ICACHE, Inode, InodeData, InodeType, FileStat};
 pub use log::LOG;
