@@ -147,3 +147,12 @@ pub fn pg_round_down(address: usize) -> usize {
 pub fn trapframe_from_pid(pid: usize) -> ConstAddr {
     TRAPFRAME.const_sub(pid * (PAGE_SIZE + PAGE_SIZE) + PAGE_SIZE)
 }
+
+use crate::consts::{TRAMPOLINE, NPROC, KERNEL_STACK_SIZE};
+
+#[inline]
+pub fn kernel_stack_position_by_tid(tid: usize) -> (usize, usize) {
+    let kstack_bottom = Into::<usize>::into(TRAMPOLINE) - (tid + 4 + NPROC) * (KERNEL_STACK_SIZE + PAGE_SIZE) ;
+    let kstack_top = kstack_bottom + KERNEL_STACK_SIZE;
+    (kstack_bottom,kstack_top)
+}
