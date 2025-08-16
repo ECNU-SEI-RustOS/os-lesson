@@ -179,7 +179,7 @@ pub struct BuddySystem {
 }
 
 
-// since *mut [T] is not Send
+// 因为 *mut [T] 不是 Send
 unsafe impl Send for BuddySystem {}
 
 impl BuddySystem {
@@ -232,13 +232,12 @@ impl BuddySystem {
             panic!("  buddy system: init twice");
         }
 
-        // make sure start and end are both page aligned
-        // and record the heap memory range: [self.base, self.end)
+        // 确保起始地址和结束地址都按页对齐，并记录堆内存范围：[self.base, self.end)
         let mut cur: usize = round_up(start, cmp::max(LEAF_SIZE, PGSIZE));
         self.base = cur;
         self.actual_end = round_down(end, cmp::max(LEAF_SIZE, PGSIZE));
 
-        // compute the max pow of 2 smaller than size of [self.base, self.actual_end)
+        // 计算小于 [self.base, self.actual_end) 大小的最大 2 的幂
         self.nsizes = log2((self.actual_end-cur)/LEAF_SIZE) + 1;
         if self.actual_end - cur > blk_size(self.max_size()) {
             self.nsizes += 1;
@@ -248,51 +247,50 @@ impl BuddySystem {
         println!("  buddy system: leaf size is {} bytes", LEAF_SIZE);
         println!("  buddy system: free lists have {} different sizes", self.nsizes);
 
-        // alloc buddy infos
-        // SAFETY: init all of the BuddyInfo
+        // 分配伙伴系统信息
+        // 安全性：初始化所有的 BuddyInfo
         let info_slice_ptr = init_slice_empty(&mut cur, self.nsizes);
         self.infos.as_mut_ptr().write(info_slice_ptr);
 
 
-        // init free list and alloc space for alloc field
+        // 初始化空闲列表并为分配字段分配空间
         for i in 0..self.nsizes {
             let nblk = self.n_blk(i);
             let info = self.get_info_mut(i);
             
             info.free.init();
 
-            // SAFETY: init the alloc field of size i
+            // 安全性：初始化大小为 i 的 alloc 字段
             let alloc_size = round_up(nblk, 8)/8;
             let alloc_slice_ptr = init_slice_empty(&mut cur, alloc_size);
             info.alloc.as_mut_ptr().write(alloc_slice_ptr);
         }
 
-        // alloc space for split field
-        // blocks of size 0 no need to split
+        // 为 split 字段分配空间
+        // 大小为 0 的块不需要分割
         for i in 1..self.nsizes {
             let nblk = self.n_blk(i);
             let info = self.get_info_mut(i);
 
-            // SAFETY: init the split field of size i
+            // 安全性：初始化大小为 i 的 split 字段
             let split_size = round_up(nblk, 8)/8;
             let split_slice_ptr = init_slice_empty(&mut cur, split_size);
             info.split.as_mut_ptr().write(split_slice_ptr);
         }
 
-        // cur address may not be aligned now
+        // 当前地址现在可能未对齐
         cur = round_up(cur, LEAF_SIZE);
 
-        // meta data lies between [base, cur)
+        // 元数据位于 [base, cur) 区间内
         let meta = self.mark_meta(cur);
 
-        // unavailable data lies between [self.actual_end, 2^(self.nsizes-1))
-        // due to the memory size of buddy system is a power of 2
+        // 不可用数据位于 [self.actual_end, 2^(self.nsizes-1)) 区间内，因为伙伴系统的内存大小是 2 的幂
         let unavail = self.mark_unavail();
         
-        // init free regions
+        // 初始化空闲区域
         let free = self.init_free(cur);
 
-        // check total memory
+        // 检查总内存
         if free != blk_size(self.max_size()) - meta - unavail {
             panic!("  buddy system: meta {}, free {}, unavail {}", meta, free, unavail);
         }
@@ -336,15 +334,14 @@ impl BuddySystem {
             return ptr::null_mut()
         }
 
-        // only guarantee the alignment not bigger than page size
+        // 仅保证对齐不超过页大小
         if layout.align() > PGSIZE {
             panic!("  buddy system: request layout alignment({}) bigger than PGSIZE({})",
                 layout.align(), PGSIZE);
         }
-        // note: the size of a value is always a multiple of its alignment
-        // now we only have to consider the size
+        // 注意：一个值的大小总是其对齐要求的倍数，因此现在我们只需要考虑大小即可
 
-        // find the smallest block can contain the size
+        // 找到能够容纳该大小的最小块
         let smalli = if layout.size() <= LEAF_SIZE {
             0 
         } else {
@@ -359,29 +356,29 @@ impl BuddySystem {
             sizei += 1;
         }
         if sizei >= self.nsizes {
-            // no free memory
+            // 没有空闲内存
             return ptr::null_mut()
         }
 
-        // pop a block at self.infos[sizei]
+        // 从 self.infos [sizei] 中弹出一个块
         let info = unsafe { self.get_info_mut(sizei) };
         let raw_addr = unsafe { info.free.pop() };
         let bi = self.blk_index(sizei, raw_addr);
         unsafe { self.get_info_mut(sizei).alloc_set(bi, true); }
 
-        // split the block until it reach smallest block size
+        // 分割该块，直到它达到最小块大小
         while sizei > smalli {            
-            // split two buddies at sizei
+            // 在 sizei 大小级别上分割两个伙伴块
             let bi = self.blk_index(sizei, raw_addr);
             let info = unsafe { self.get_info_mut(sizei) };
             info.split_set(bi, true);
 
-            // alloc one buddy at sizei-1
+            // 在 sizei-1 大小级别上分配一个伙伴块...
             let bi1 = self.blk_index(sizei-1, raw_addr);
             let info1 = unsafe { self.get_info_mut(sizei-1) };
             info1.alloc_set(bi1, true);
 
-            // free the other buddy at sizei-1
+            // 在 sizei-1 大小级别上释放另一个伙伴块
             let buddy_addr = raw_addr + blk_size(sizei-1);
             unsafe { info1.free.push(buddy_addr); }
 
@@ -427,14 +424,14 @@ impl BuddySystem {
     ///
     /// [`Layout`]: core::alloc::Layout
     fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        // check ptr in range [self.base, self.actual_end)
+        // 检查指针是否在 [self.base, self.actual_end) 区间内
         let mut raw_addr = ptr as usize;
         if raw_addr < self.base || raw_addr >= self.actual_end {
             panic!("  buddy system: dealloc ptr out of range");
         }
 
-        // find the size of block pointed by ptr
-        // and check with the layout
+        // 找到 ptr 所指向的块的大小
+        // 并与布局进行核对
         let mut sizei = self.nsizes;
         for i in 0..self.max_size() {
             let bi = self.blk_index(i+1, raw_addr);
@@ -448,19 +445,19 @@ impl BuddySystem {
             panic!("  buddy system: dealloc cannot recycle ptr");
         }
 
-        // check layout
+        // 检查布局
         if layout.size() > blk_size(sizei) {
             panic!("  buddy system: layout {:?} > blk size {}", layout, blk_size(sizei));
         }
 
-        // free and coalesce
+        // 释放并合并（块）
         while sizei < self.max_size() {
             let bi = self.blk_index(sizei, raw_addr);
             let buddyi = if bi % 2 == 0 { bi+1 } else { bi-1 };
             let info = unsafe { self.get_info_mut(sizei) };
             info.alloc_set(bi, false);
             
-            // test if buddy is free
+            // 检查伙伴块是否空闲
             if info.is_alloc_set(buddyi) {
                 break;
             }
@@ -470,7 +467,7 @@ impl BuddySystem {
                 raw_addr = buddy_addr;
             }
 
-            // coalesce and continue
+            // 合并并继续
             sizei += 1;
             let spliti = self.blk_index(sizei, raw_addr);
             let info = unsafe { self.get_info_mut(sizei) };
@@ -569,10 +566,10 @@ impl BuddySystem {
             while bi < bj {
                 let info = unsafe { self.get_info_mut(i) };
 
-                // mark alloc
+                // 标记为已分配
                 info.alloc_set(bi, true);
 
-                // mark split, skip size 0
+                // 标记为已分割，跳过大小为 0 的情况
                 if i > 0 {
                     info.split_set(bi, true);
                 }
@@ -657,22 +654,22 @@ impl BuddySystem {
         }
     }
 
-    /// Get buddy info at certain index.
+    /// 获取特定索引处的伙伴块信息。
     ///
-    /// SAFETY: must be called after the initialization of infos field.
+    /// 安全性：必须在 infos 字段初始化之后调用
     unsafe fn get_info_mut(&mut self, index: usize) -> &mut BuddyInfo {
         let info_slice_ptr = *self.infos.as_ptr();
         info_slice_ptr.get_unchecked_mut(index).as_mut().unwrap()
     }
 
-    /// The largest block size.
-    /// Also the last index into the buddy info array.
+    /// 最大的块大小。
+    /// 也是伙伴信息数组中的最后一个索引。
     #[inline]
     fn max_size(&self) -> usize {
         self.nsizes - 1
     }
 
-    /// Number of block at size k, based on the total managed memory.
+    /// 基于总的管理内存，大小为 k 的块的数量。
     #[inline]
     fn n_blk(&self, k: usize) -> usize {
         1 << (self.max_size() - k)
@@ -690,41 +687,41 @@ impl BuddySystem {
         i
     }
 
-    /// Receive size k and block index bi.
-    /// Return the block's raw addr at this buddy system.
+    /// 接收大小 k 和块索引 bi。
+    /// 返回该伙伴系统中块的原始地址。
     fn blk_addr(&self, k: usize, bi: usize) -> usize {
         self.base + (bi * blk_size(k))
     }
 }
 
-/// Buddy info for block of a certain size k, k is a power of 2 
+/// 用于特定大小 k 的块的伙伴块信息，k 是 2 的幂 
 #[repr(C)]
 struct BuddyInfo {
-    free: List,                         // record blocks of a certain size
-    alloc: MaybeUninit<*mut [u8]>,      // tell if a block is allocated
-    split: MaybeUninit<*mut [u8]>,      // tell if a block is split into smaller size
+    free: List,                         // 记录特定大小的块
+    alloc: MaybeUninit<*mut [u8]>,      // 判断一个块是否已分配
+    split: MaybeUninit<*mut [u8]>,      // 判断一个块是否被分割成更小的尺寸
 }
 
 impl BuddyInfo {
-    /// SAFETY: must be called after the initialization of alloc field.
+    /// 安全性：必须在 alloc 字段初始化之后调用。
     unsafe fn get_alloc(&self, index: usize) -> &u8 {
         let alloc_slice_ptr = *self.alloc.as_ptr() as *const [u8];
         alloc_slice_ptr.get_unchecked(index).as_ref().unwrap()
     }
 
-    /// SAFETY: must be called after the initialization of alloc field.
+    /// 安全性：必须在 alloc 字段初始化之后调用。
     unsafe fn get_alloc_mut(&mut self, index: usize) -> &mut u8 {
         let alloc_slice_ptr = *self.alloc.as_ptr();
         alloc_slice_ptr.get_unchecked_mut(index).as_mut().unwrap()
     }
 
-    /// SAFETY: must be called after the initialization of split field.
+    /// 安全性：必须在 alloc 字段初始化之后调用。
     unsafe fn get_split(&self, index: usize) -> &u8 {
         let split_slice_ptr = *self.split.as_ptr() as *const [u8];
         split_slice_ptr.get_unchecked(index).as_ref().unwrap()
     }
 
-    /// SAFETY: must be called after the initialization of split field.
+    /// 安全性：必须在 alloc 字段初始化之后调用。
     unsafe fn get_split_mut(&mut self, index: usize) -> &mut u8 {
         let split_slice_ptr = *self.split.as_ptr();
         split_slice_ptr.get_unchecked_mut(index).as_mut().unwrap()
@@ -755,9 +752,9 @@ impl BuddyInfo {
     }
 }
 
-/// Init the uninit raw slice wrapped in MaybeUninit with empty data, typically 0.
-/// The passed-in T should have repr(C).
-/// Return an initialized raw slice ptr.
+/// 用空数据（通常为 0）初始化由 MaybeUninit 包装的未初始化原始切片。
+/// 传入的 T 应具有 repr (C) 属性。
+/// 返回一个已初始化的原始切片指针
 unsafe fn init_slice_empty<T>(cur: &mut usize, len: usize) -> *mut [T] {
     let raw_ptr = *cur as *mut T;
     *cur += size_of::<T>() * len;
@@ -799,7 +796,7 @@ pub mod tests {
     use core::sync::atomic::{AtomicU8, Ordering};
 
     pub fn alloc_simo() {
-        // use NSMP to synchronize testing pr's spinlock
+        // 使用 NSMP 来同步测试拉取请求的自旋锁
         static NSMP: AtomicU8 = AtomicU8::new(0);
         NSMP.fetch_add(1, Ordering::Relaxed);
         while NSMP.load(Ordering::Relaxed) != NSMP as u8 {}
