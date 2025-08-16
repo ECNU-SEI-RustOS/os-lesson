@@ -119,9 +119,8 @@ impl ProcManager {
     /// - 此函数假设 `kvm_map` 成功完成映射，未做错误检查。
     pub unsafe fn proc_init(&mut self) {
         for (pos, p) in self.table.iter_mut().enumerate() {
-            // Allocate a page for the process's kernel stack.
-            // Map it high in memory, followed by an invalid
-            // guard page.
+            // 为进程的内核栈分配一个页面。
+            // 将其映射到内存的高位，后面跟着一个无效的保护页。
             let pa = RawQuadPage::new_zeroed() as usize;
             let va = kstack(pos);
             kvm_map(
@@ -205,11 +204,10 @@ impl ProcManager {
             let mut guard = p.excl.lock();
             match guard.state {
                 ProcState::UNUSED => {
-                    // holding the process's excl lock,
-                    // so manager can modify its private data
+                    // 持有进程的排他锁，因此管理器可以修改其私有数据
                     let pd = p.data.get_mut();
 
-                    // alloc trapframe
+                    // 分配陷阱帧
                     pd.tf = unsafe { RawSinglePage::try_new_zeroed().ok()? as *mut TrapFrame };
 
                     debug_assert!(pd.pagetable.is_none());
@@ -435,7 +433,7 @@ impl ProcManager {
 
         let mut parent_map = self.parents.lock();
 
-        // Set the children's parent to init process.
+        // 将子进程的父进程设置为 init 进程。
         let mut have_child = false;
         for child in parent_map.iter_mut() {
             match child {
