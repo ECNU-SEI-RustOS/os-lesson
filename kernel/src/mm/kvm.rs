@@ -160,7 +160,7 @@ pub unsafe fn kvm_map(va: VirtAddr, pa: PhysAddr, size: usize, perm: PteFlag) {
     }
     drop(spin_lock_guard);
 }
-
+static mut TID_KSTACK_COUNT:SpinLock<usize> = SpinLock::new(0, "lock");
 pub unsafe fn kvm_task_kstack_map(va: VirtAddr, pa: PhysAddr, tid : usize,size: usize, perm: PteFlag) {
     #[cfg(feature = "verbose_init_info")]
     println!(
@@ -169,7 +169,7 @@ pub unsafe fn kvm_task_kstack_map(va: VirtAddr, pa: PhysAddr, tid : usize,size: 
         pa.as_usize(),
         size
     );
-    let mut spin_lock_guard = kernel_table_lock.lock();
+    let mut spin_lock_guard = TID_KSTACK_COUNT.lock();
     if *spin_lock_guard <= tid {
         kerror!("kstack map {:?}",va);
         if let Err(err) = KERNEL_PAGE_TABLE.map_pages(va, size, pa, perm) {
