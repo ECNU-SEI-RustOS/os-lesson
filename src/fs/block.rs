@@ -44,11 +44,11 @@ use super::inode::{DiskInode, InodeType, locate_inode_offset};
 /// - 日志写入 `LOG.write()` 要求调用者持有一致性的写入上下文。
 
 pub fn bm_alloc(dev: u32) -> u32 {
-    // first, iterate each bitmap block
+    // 首先，迭代每个位图块
     let total_block = unsafe { SUPER_BLOCK.size() };
     for base in (0..total_block).step_by(BPB as usize) {
         let mut buf = BCACHE.bread(dev, unsafe { SUPER_BLOCK.bitmap_blockno(base) });
-        // second, iterate each bit in the bitmap block
+        // 其次，迭代位图块中的每个位
         for offset in 0..BPB {
             if base + offset >= total_block {
                 break;
@@ -62,7 +62,7 @@ pub fn bm_alloc(dev: u32) -> u32 {
             byte.set_bit(bit, true);
             LOG.write(buf);
 
-            // zero the free block
+            // 清零空闲块
             let free_bn = base + offset;
             let mut free_buf = BCACHE.bread(dev, free_bn);
             unsafe { ptr::write_bytes(free_buf.raw_data_mut(), 0, 1); }
