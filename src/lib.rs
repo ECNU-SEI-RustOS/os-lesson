@@ -43,12 +43,12 @@ fn test_main_entry() {
 
     let cpu_id = unsafe { cpu_id() };
 
-    // test cases only needed to be executed with a single hart/kernel-thread
+    // 只需要在单个硬件线程 / 内核线程上执行的测试用例
     if cpu_id == 0 {
         spinlock::tests::smoke();
     }
 
-    // test cases needed to be executed with multiple harts/kernel-threads
+    // 需要在多个硬件线程 / 内核线程上执行的测试用例
     printf::tests::println_simo();
     mm::kalloc::tests::alloc_simo();
 
