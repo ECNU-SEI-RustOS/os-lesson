@@ -16,8 +16,13 @@ use crate::trap;
 
 use super::{Proc, elf};
 
+/// 系统调用结果类型
 pub type SysResult = Result<usize, ()>;
 
+/// 系统调用 trait 定义
+///
+/// 包含所有操作系统支持的系统调用方法，
+/// 由 `Proc` 结构体实现具体功能。
 pub trait Syscall {
     fn sys_fork(&mut self) -> SysResult;
     fn sys_exit(&mut self) -> SysResult;
@@ -42,10 +47,21 @@ pub trait Syscall {
     fn sys_close(&mut self) -> SysResult;
 }
 
+/// 为进程实现系统调用接口
 impl Syscall for Proc {
-    /// Redirect to [`Proc::fork`].
+    /// 创建当前进程的副本（子进程）
     ///
-    /// [`Proc::fork`]: Proc::fork
+    /// # 功能说明
+    /// 复制当前进程的状态（包括内存、文件描述符等）创建新进程。
+    /// 子进程从 fork 返回点开始执行，与父进程共享内存直到写入时复制。
+    ///
+    /// # 返回值
+    /// - 父进程：返回子进程 PID
+    /// - 子进程：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 实际实现委托给 `Proc::fork` 方法
     fn sys_fork(&mut self) -> SysResult {
         let ret = self.fork();
 
@@ -55,8 +71,17 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Exit the current process normally.
-    /// Note: This function call will not return.
+    /// 终止当前进程
+    ///
+    /// # 功能说明
+    /// 结束当前进程的执行，释放资源并通知父进程。
+    /// 此函数不会返回，进程状态变为 ZOMBIE 直到父进程回收。
+    ///
+    /// # 参数
+    /// - `exit_status`: 退出状态码（通过第一个参数获取）
+    ///
+    /// # 注意
+    /// 调用后进程立即终止，不会返回到用户空间
     fn sys_exit(&mut self) -> SysResult {
         let exit_status = self.arg_i32(0);
 
@@ -67,8 +92,17 @@ impl Syscall for Proc {
         unreachable!("process exit");
     }
 
-    /// Wait for any child(if any) process to exit.
-    /// Recycle the chile process and return its pid.
+    /// 等待子进程退出
+    ///
+    /// # 功能说明
+    /// 挂起当前进程，直到任意子进程结束，然后回收子进程资源。
+    ///
+    /// # 参数
+    /// - `status_addr`: 用户空间地址，用于存储子进程退出状态
+    ///
+    /// # 返回值
+    /// - 成功：返回结束的子进程 PID
+    /// - 错误：返回 Err(())
     fn sys_wait(&mut self) -> SysResult {
         let addr = self.arg_addr(0);
         let ret =  unsafe { PROC_MANAGER.waiting(self.index, addr) };
@@ -79,26 +113,43 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Create pipe for user.
+    /// 创建管道
+    ///
+    /// # 功能说明
+    /// 创建一对相互连接的文件描述符，用于进程间通信。
+    /// 一个描述符用于读取，另一个用于写入。
+    ///
+    /// # 参数
+    /// - `pipefds_addr`: 用户空间地址，用于存储两个文件描述符
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 流程
+    /// 1. 分配两个文件描述符
+    /// 2. 创建管道对象
+    /// 3. 将描述符写入用户空间
+    /// 4. 将管道对象绑定到文件描述符
     fn sys_pipe(&mut self) -> SysResult {
         let pipefds_addr = self.arg_addr(0);
         let addr_fdread = pipefds_addr;
         let addr_fdwrite = pipefds_addr+mem::size_of::<u32>();
 
-        // alloc fd
+        // 分配文件描述符
         let pdata = self.data.get_mut();
         let (fd_read, fd_write) = pdata.alloc_fd2().ok_or(())?;
 
-        // alloc pipe
+        // 创建管道（返回读写文件对象）
         let (file_read, file_write) = Pipe::create().ok_or(())?;
 
-        // transfer fd to user
+        // 将描述符写入用户空间
         let fd_read_u32: u32 = fd_read.try_into().unwrap();
         let fd_write_u32: u32 = fd_write.try_into().unwrap();
         pdata.copy_out(&fd_read_u32 as *const u32 as *const u8, addr_fdread, mem::size_of::<u32>())?;
         pdata.copy_out(&fd_write_u32 as *const u32 as *const u8, addr_fdwrite, mem::size_of::<u32>())?;
 
-        // assign the file to process
+        // 绑定文件对象到描述符
         pdata.open_files[fd_read].replace(file_read);
         pdata.open_files[fd_write].replace(file_write);
 
@@ -108,7 +159,22 @@ impl Syscall for Proc {
         Ok(0)
     }
 
-    /// Read form file descriptor.
+    /// 从文件描述符读取数据
+    ///
+    /// # 功能说明
+    /// 从指定文件描述符读取数据到用户空间缓冲区。
+    ///
+    /// # 参数
+    /// - `fd`: 文件描述符
+    /// - `user_addr`: 用户空间缓冲区地址
+    /// - `count`: 要读取的字节数
+    ///
+    /// # 返回值
+    /// - 成功：返回实际读取字节数
+    /// - 错误：返回 Err(())
+    ///
+    /// # 安全
+    /// 验证用户地址和计数有效性
     fn sys_read(&mut self) -> SysResult {
         let fd = self.arg_fd(0)?;
         let user_addr = self.arg_addr(1);
@@ -127,8 +193,20 @@ impl Syscall for Proc {
         ret.map(|count| count as usize)
     }
 
-    /// Kill a process.
-    /// Note: Other signals are not supported yet.
+    /// 终止指定进程
+    ///
+    /// # 功能说明
+    /// 向目标进程发送终止信号，使其退出执行。
+    ///
+    /// # 参数
+    /// - `pid`: 目标进程ID
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 目前仅支持终止信号，不支持其他信号类型
     fn sys_kill(&mut self) -> SysResult {
         let pid = self.arg_i32(0);
         if pid < 0 {
@@ -143,7 +221,24 @@ impl Syscall for Proc {
         ret.map(|()| 0)
     }
 
-    /// Load an elf binary and execuate it the currrent process context.
+    /// 执行新程序
+    ///
+    /// # 功能说明
+    /// 替换当前进程的内存空间，加载并执行指定路径的ELF可执行文件。
+    ///
+    /// # 参数
+    /// - `path`: 可执行文件路径
+    /// - `argv`: 命令行参数数组
+    ///
+    /// # 返回值
+    /// - 成功：不会返回（新程序开始执行）
+    /// - 错误：返回 Err(())
+    ///
+    /// # 流程
+    /// 1. 读取可执行文件路径
+    /// 2. 读取命令行参数
+    /// 3. 加载ELF文件
+    /// 4. 设置新程序的初始状态
     fn sys_exec(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -154,7 +249,7 @@ impl Syscall for Proc {
         let uargv = self.arg_addr(1);
         let mut argv: [Option<Box<[u8; MAXARGLEN]>>; MAXARG] = array![_ => None; MAXARG];
         for i in 0..MAXARG {
-            // fetch ith arg's address into uarg
+            // 获取第i个参数的地址
             match self.fetch_addr(uargv+i*mem::size_of::<usize>()) {
                 Ok(addr) => uarg = addr,
                 Err(s) => {
@@ -170,7 +265,7 @@ impl Syscall for Proc {
                 break       
             }
 
-            // allocate kernel space to copy in user arg
+            // 为参数分配内核空间
             match Box::try_new_zeroed() {
                 Ok(b) => unsafe { argv[i] = Some(b.assume_init()) },
                 Err(_) => {
@@ -179,7 +274,7 @@ impl Syscall for Proc {
                 },
             }
 
-            // copy user arg into kernel space
+            // 将用户空间参数复制到内核
             if let Err(s) = self.fetch_str(uarg, argv[i].as_deref_mut().unwrap()) {
                 error = s;
                 break
@@ -195,7 +290,18 @@ impl Syscall for Proc {
         result
     }
 
-    /// Given a file descriptor, return the file status.
+    /// 获取文件状态信息
+    ///
+    /// # 功能说明
+    /// 获取指定文件描述符的状态信息并复制到用户空间。
+    ///
+    /// # 参数
+    /// - `fd`: 文件描述符
+    /// - `addr`: 用户空间地址（用于存储FileStat结构）
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
     fn sys_fstat(&mut self) -> SysResult {
         let fd = self.arg_fd(0)?;
         let addr = self.arg_addr(1);
@@ -218,7 +324,21 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Change the current process's working directory,
+    /// 更改当前工作目录
+    ///
+    /// # 功能说明
+    /// 将当前进程的工作目录更改为指定路径。
+    ///
+    /// # 参数
+    /// - `path`: 目标目录路径
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 流程
+    /// 1. 验证路径存在且是目录
+    /// 2. 更新进程的当前工作目录
     fn sys_chdir(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -244,7 +364,17 @@ impl Syscall for Proc {
         Ok(0)
     }
 
-    /// Duplicate a file descriptor.
+    /// 复制文件描述符
+    ///
+    /// # 功能说明
+    /// 创建指定文件描述符的副本，指向相同的文件对象。
+    ///
+    /// # 参数
+    /// - `old_fd`: 原文件描述符
+    ///
+    /// # 返回值
+    /// - 成功：返回新文件描述符
+    /// - 错误：返回 Err(())
     fn sys_dup(&mut self) -> SysResult {
         let old_fd = self.arg_fd(0)?;
         let pd = self.data.get_mut();
@@ -261,7 +391,13 @@ impl Syscall for Proc {
         Ok(new_fd)
     }
 
-    /// Get the process's pid.
+    /// 获取当前进程ID
+    ///
+    /// # 功能说明
+    /// 返回当前进程的唯一标识符（PID）。
+    ///
+    /// # 返回值
+    /// 当前进程的PID
     fn sys_getpid(&mut self) -> SysResult {
         let pid = self.excl.lock().pid;
 
@@ -271,9 +407,20 @@ impl Syscall for Proc {
         Ok(pid)
     }
 
-    /// Redirect to [`ProcData::sbrk`].
+    /// 调整进程堆大小
     ///
-    /// [`ProcData::sbrk`]: ProcData::sbrk
+    /// # 功能说明
+    /// 增加或减少进程的堆内存空间。
+    ///
+    /// # 参数
+    /// - `increment`: 堆大小的增量（字节数）
+    ///
+    /// # 返回值
+    /// - 成功：返回原堆顶地址
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 实际实现委托给 `ProcData::sbrk` 方法
     fn sys_sbrk(&mut self) -> SysResult {
         let increment = self.arg_i32(0);
         let ret = self.data.get_mut().sbrk(increment);
@@ -284,7 +431,20 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Put the current process into sleep.
+    /// 使进程休眠
+    ///
+    /// # 功能说明
+    /// 使当前进程休眠指定数量的时钟周期。
+    ///
+    /// # 参数
+    /// - `count`: 要休眠的时钟周期数
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 实际实现委托给 `trap::clock_sleep`
     fn sys_sleep(&mut self) -> SysResult {
         let count = self.arg_i32(0);
         if count < 0 {
@@ -299,8 +459,16 @@ impl Syscall for Proc {
         ret.map(|()| 0)
     }
 
-    /// Not much like the linux/unix's uptime.
-    /// Just return the ticks in current implementation.
+    /// 获取系统运行时间
+    ///
+    /// # 功能说明
+    /// 返回系统启动以来的时钟周期数（近似系统运行时间）。
+    ///
+    /// # 返回值
+    /// 系统时钟周期数
+    ///
+    /// # 注意
+    /// 实际实现委托给 `trap::clock_read`
     fn sys_uptime(&mut self) -> SysResult {
         let ret = trap::clock_read();
 
@@ -310,10 +478,21 @@ impl Syscall for Proc {
         Ok(ret)
     }
 
-    /// Open and optionally create a file.
-    /// Note1: It can only possibly create a regular file,
-    ///     use [`Syscall::sys_mknod`] to creata special file instead.
-    /// Note2: File permission and modes are not supported yet.
+    /// 打开或创建文件
+    ///
+    /// # 功能说明
+    /// 打开指定路径的文件，返回关联的文件描述符。
+    ///
+    /// # 参数
+    /// - `path`: 文件路径
+    /// - `flags`: 打开标志（目前未完全实现）
+    ///
+    /// # 返回值
+    /// - 成功：返回文件描述符
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 创建特殊文件应使用 `sys_mknod`
     fn sys_open(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -333,8 +512,22 @@ impl Syscall for Proc {
         Ok(fd)
     }
 
-    /// Write user content to file descriptor.
-    /// Return the conut of bytes written.
+    /// 写入文件描述符
+    ///
+    /// # 功能说明
+    /// 将用户空间缓冲区的数据写入指定文件描述符。
+    ///
+    /// # 参数
+    /// - `fd`: 文件描述符
+    /// - `user_addr`: 用户空间数据地址
+    /// - `count`: 要写入的字节数
+    ///
+    /// # 返回值
+    /// - 成功：返回实际写入字节数
+    /// - 错误：返回 Err(())
+    ///
+    /// # 安全
+    /// 验证用户地址和计数有效性
     fn sys_write(&mut self) -> SysResult {
         let fd = self.arg_fd(0)?;
         let user_addr = self.arg_addr(1);
@@ -353,7 +546,19 @@ impl Syscall for Proc {
         ret.map(|count| count as usize)
     }
 
-    /// Create a device file.
+    /// 创建设备文件
+    ///
+    /// # 功能说明
+    /// 在文件系统中创建设备特殊文件。
+    ///
+    /// # 参数
+    /// - `path`: 文件路径
+    /// - `major`: 主设备号
+    /// - `minor`: 次设备号
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
     fn sys_mknod(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -377,8 +582,18 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Delete a pathname and possibly delete the refered inode in the fs.
-    /// In essence, [`Syscall::sys_unlink`] will decrement the link count of the inode.
+    /// 删除文件链接
+    ///
+    /// # 功能说明
+    /// 删除文件路径的链接，减少文件的链接计数。
+    /// 如果链接计数降为0且没有进程打开该文件，则释放文件资源。
+    ///
+    /// # 参数
+    /// - `path`: 要删除的文件路径
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
     fn sys_unlink(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -405,7 +620,23 @@ impl Syscall for Proc {
         ret.map(|()| 0)
     }
 
-    /// Create a new hard link.
+    /// 创建文件硬链接
+    ///
+    /// # 功能说明
+    /// 为现有文件创建新的硬链接（路径别名）。
+    ///
+    /// # 参数
+    /// - `old_path`: 现有文件路径
+    /// - `new_path`: 新链接路径
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 流程
+    /// 1. 查找原文件
+    /// 2. 增加原文件链接计数
+    /// 3. 在新路径创建链接
     fn sys_link(&mut self) -> SysResult {
         let mut old_path: [u8; MAXPATH] = [0; MAXPATH];
         let mut new_path: [u8; MAXPATH] = [0; MAXPATH];
@@ -414,7 +645,7 @@ impl Syscall for Proc {
 
         LOG.begin_op();
 
-        // find old path
+        // 查找原文件
         let old_inode = ICACHE.namei(&old_path).ok_or_else(|| {LOG.end_op(); ()})?;
         let mut old_idata = old_inode.lock();
         let (old_dev, old_inum) = old_idata.get_dev_inum();
@@ -427,7 +658,7 @@ impl Syscall for Proc {
         old_idata.update();
         drop(old_idata);
 
-        // if we cannot create a new path
+        // 如果无法创建新路径
         let revert_link = move |inode: Inode| {
             let mut idata = inode.lock();
             idata.unlink();
@@ -437,7 +668,7 @@ impl Syscall for Proc {
             LOG.end_op();
         };
 
-        // create new path
+        // 创建新路径
         let mut name: [u8; MAX_DIR_SIZE] = [0; MAX_DIR_SIZE];
         let new_inode: Inode;
         match ICACHE.namei_parent(&new_path, &mut name) {
@@ -465,8 +696,20 @@ impl Syscall for Proc {
         Ok(0)
     }
 
-    /// Create a directory.
-    /// Note: Mode is not supported yet.
+    /// 创建目录
+    ///
+    /// # 功能说明
+    /// 在指定路径创建新目录。
+    ///
+    /// # 参数
+    /// - `path`: 目录路径
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
+    ///
+    /// # 注意
+    /// 目录权限模式尚未实现
     fn sys_mkdir(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -488,7 +731,17 @@ impl Syscall for Proc {
         ret
     }
 
-    /// Given a file descriptor, close the opened file.
+    /// 关闭文件描述符
+    ///
+    /// # 功能说明
+    /// 关闭指定文件描述符，释放相关资源。
+    ///
+    /// # 参数
+    /// - `fd`: 要关闭的文件描述符
+    ///
+    /// # 返回值
+    /// - 成功：返回 0
+    /// - 错误：返回 Err(())
     fn sys_close(&mut self) -> SysResult {
         let fd = self.arg_fd(0)?;
         let file = self.data.get_mut().open_files[fd].take();
@@ -501,7 +754,16 @@ impl Syscall for Proc {
     }
 }
 
-// LTODO - switch to macro that can include line numbers
+/// 系统调用警告函数
+///
+/// # 功能说明
+/// 输出系统调用相关的警告信息，用于调试。
+///
+/// # 参数
+/// - `s`: 警告信息（实现Display trait）
+///
+/// # 注意
+/// 仅在启用 `kernel_warning` 特性时实际输出
 #[inline]
 fn syscall_warning<T: Display>(s: T) {
     #[cfg(feature = "kernel_warning")]
