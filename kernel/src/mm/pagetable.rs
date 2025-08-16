@@ -1,10 +1,11 @@
 use array_macro::array;
 
 use super::{pg_round_up, Addr, PhysAddr, RawPage, RawSinglePage, VirtAddr};
-use crate::consts::{ConstAddr, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
+use crate::consts::{ConstAddr, MAX_TASKS_PER_PROC, TRAPFRAME, USER_STACK_SIZE};
 use crate::consts::{PAGE_SIZE, PGSHIFT, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, USERTEXT};
 use crate::mm::page_allocator::{page_alloc, PAGE_ALLOCATOR};
 use crate::mm::{pagetable, trapframe_from_pid, RawQuadPage};
+use crate::process::task::task::trapframe_from_tid;
 
 use alloc::boxed::Box;
 use core::{ptr};
@@ -433,12 +434,16 @@ impl PageTable {
     /// - 调用者必须保证 `trapframe` 物理地址有效且正确。  
     /// - 返回的页表应妥善管理，避免内存泄漏或数据竞争。  
     /// - 适合在进程创建时调用，且需保证调用时无并发冲突。
-    pub fn alloc_proc_pagetable(trapframe: usize, pid: usize) -> Option<Box<Self>> {
+    pub fn alloc_proc_pagetable(trapframe: usize,tid: usize) -> Option<*mut PageTable> {
         extern "C" {
             fn trampoline();
         }
 
-        let mut pagetable = unsafe { Box::<Self>::try_new_zeroed().ok()?.assume_init() };
+        //let mut pagetable = unsafe { Box::<Self>::try_new_zeroed().ok()?.assume_init() };
+        let pagetable = unsafe {
+            RawSinglePage::try_new_zeroed().unwrap() as *mut PageTable
+        };
+        let pagetable = unsafe { pagetable.as_mut().unwrap() };
         pagetable
             .map_pages(
                 VirtAddr::from(TRAMPOLINE),
@@ -449,14 +454,13 @@ impl PageTable {
             .ok()?;
         pagetable
             .map_pages(
-                VirtAddr::from(trapframe_from_pid(pid)),
+                VirtAddr::from(trapframe_from_tid(tid)),
                 PAGE_SIZE,
                 PhysAddr::try_from(trapframe).unwrap(),
                 PteFlag::R | PteFlag::W,
             )
             .ok()?;
-        kinfo!("user space map {:?}",VirtAddr::from(trapframe_from_pid(pid)));
-        Some(pagetable)
+        Some(pagetable as *mut PageTable)
     }
 
     /// # 功能说明
@@ -480,9 +484,9 @@ impl PageTable {
     /// - 调用时需保证页表和映射状态一致，避免并发访问冲突。  
     /// - 释放物理内存和虚拟映射属于危险操作，调用者需确保调用时无其他线程访问相关内存。  
     /// - 该函数安全接口，内部细节依赖 `uvm_unmap` 的正确实现。
-    pub fn dealloc_proc_pagetable(&mut self, proc_size: usize, pid: usize) {
+    pub fn dealloc_proc_pagetable(&mut self, proc_size: usize, tid: usize) {
         self.uvm_unmap(TRAMPOLINE.into(), 1, false);
-        self.uvm_unmap(trapframe_from_pid(pid).into(), 1, false);
+        self.uvm_unmap(trapframe_from_tid(tid).into(), 1, false);
         //self.uvm_unmap(ustack_bottom_from_pid(1).into(), 4, false);
         // free physical memory
         if proc_size > 0 {
@@ -1021,6 +1025,9 @@ impl PageTable {
             va.add_page();
             debug_assert_eq!(src, va.as_usize());
         }
+    }
+    pub fn clean(&mut self){
+        self.data.iter_mut().for_each(|pte| pte.free());
     }
 }
 
