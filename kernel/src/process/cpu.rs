@@ -92,7 +92,7 @@ impl CpuManager {
         unsafe {
             let cpu = self.my_cpu();
             if cpu.task.is_none() {
-                panic!("my_proc(): no process running");
+                panic!("my_proc(): no task running");
             }
             task = cpu.task.unwrap();
         }

@@ -2,35 +2,39 @@ use alloc::rc::Rc;
 use alloc::vec::{self, Vec};
 use array_macro::array;
 
-use alloc::sync::Arc;
-use core::mem;
-use core::sync::atomic::{AtomicBool, Ordering};
-use core::option::Option;
-use core::ptr;
-use core::cell::UnsafeCell;
+use crate::consts::{
+    fs::{NFILE, ROOTIPATH},
+    PAGE_SIZE,
+};
 use crate::consts::{KERNEL_STACK_SIZE, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
+use crate::fs::{File, Inode, ICACHE, LOG};
 use crate::mm::pagetable::ustack_bottom_by_pos;
-use crate::process::task::trapframe_from_tid;
-use crate::process::task::tid::TID_ALLOCATOR;
-use crate::process::PROCFIFO;
-use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};
 use crate::mm::{PageTable, PhysAddr, PteFlag, RawPage, RawSinglePage, VirtAddr};
+use crate::process::sync::sem::Semaphore;
+use crate::process::task::tid::TID_ALLOCATOR;
+use crate::process::task::trapframe_from_tid;
+use crate::process::PROCFIFO;
 use crate::register::{satp, sepc, sstatus};
 use crate::spinlock::{SpinLock, SpinLockGuard};
 use crate::trap::user_trap;
-use crate::fs::{Inode, ICACHE, LOG, File};
+use alloc::sync::Arc;
+use core::cell::UnsafeCell;
+use core::mem;
+use core::option::Option;
+use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use super::cpu::CPU_MANAGER;
 use super::CpuManager;
 use super::PROC_MANAGER;
-use super::cpu::CPU_MANAGER;
 use super::{fork_ret, Context, TrapFrame};
 
 use self::syscall::Syscall;
 
-mod syscall;
 mod elf;
-pub mod pid;
 pub mod manager;
+pub mod pid;
+mod syscall;
 
 /// 进程状态枚举类型，表示操作系统内核中进程的不同生命周期状态。
 ///
@@ -52,7 +56,6 @@ pub enum ProcState {
     ZOMBIE,
 }
 
-
 /// 进程的排他信息结构体，包含进程的核心状态和控制字段。
 ///
 /// 该结构体保存进程的调度状态、退出码、等待通道及进程标识符等信息，
@@ -67,9 +70,8 @@ pub struct TaskExcl {
     /// 进程的唯一标识符（进程ID）。
     pub pid: usize,
     /// 线程号
-    pub tid: usize
+    pub tid: usize,
 }
-
 
 impl TaskExcl {
     const fn new() -> Self {
@@ -78,7 +80,7 @@ impl TaskExcl {
             exit_status: 0,
             channel: 0,
             pid: 0,
-            tid: 0
+            tid: 0,
         }
     }
 
@@ -115,7 +117,6 @@ pub struct TaskData {
     /// 进程当前工作目录的 inode。
     pub cwd: Option<Inode>,
 }
-
 
 impl TaskData {
     const fn new() -> Self {
@@ -167,7 +168,7 @@ impl TaskData {
     pub fn init_context(&mut self) {
         self.context.clear();
         self.context.set_ra(fork_ret as *const () as usize);
-        self.context.set_sp(self.kstack + PAGE_SIZE*4);
+        self.context.set_sp(self.kstack + PAGE_SIZE * 4);
     }
 
     /// Return the process's mutable reference of context
@@ -224,7 +225,7 @@ impl TaskData {
     //     trapframe.kernel_satp = satp::read();
     //     // current kernel stack's content is cleaned
     //     // after returning to the kernel space
-        
+
     //     trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
     //     trapframe.kernel_trap = user_trap as usize;
     //     trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
@@ -249,7 +250,13 @@ impl TaskData {
     /// 实际操作会转发调用到页表的对应方法。
     #[inline]
     pub fn copy_out(&mut self, src: *const u8, dst: usize, count: usize) -> Result<(), ()> {
-        unsafe { self.pagetable.unwrap().as_mut().unwrap().copy_out(src, dst, count)}
+        unsafe {
+            self.pagetable
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .copy_out(src, dst, count)
+        }
     }
 
     /// 将内容从用户的源虚拟地址 src 复制到内核空间的目标地址 dst。
@@ -257,13 +264,20 @@ impl TaskData {
     /// 实际操作会转发调用到页表的对应方法。
     #[inline]
     pub fn copy_in(&self, src: usize, dst: *mut u8, count: usize) -> Result<(), ()> {
-        unsafe { self.pagetable.unwrap().as_mut().unwrap().copy_in(src, dst, count)}
+        unsafe {
+            self.pagetable
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .copy_in(src, dst, count)
+        }
     }
 
     /// 分配一个新的文件描述符。
     /// 返回的文件描述符可直接作为索引使用，因为它仅属于当前进程私有。
     fn alloc_fd(&mut self) -> Option<usize> {
-        self.open_files.iter()
+        self.open_files
+            .iter()
             .enumerate()
             .find(|(_, f)| f.is_none())
             .map(|(i, _)| i)
@@ -272,7 +286,9 @@ impl TaskData {
     /// 分配一对文件描述符。
     /// 通常用于管道（pipe）的创建。
     fn alloc_fd2(&mut self) -> Option<(usize, usize)> {
-        let mut iter = self.open_files.iter()
+        let mut iter = self
+            .open_files
+            .iter()
             .enumerate()
             .filter(|(_, f)| f.is_none())
             .take(2)
@@ -314,14 +330,14 @@ impl TaskData {
         let tf = self.trapframe;
         self.trapframe = ptr::null_mut();
         if !tf.is_null() {
-            unsafe { RawSinglePage::from_raw_and_drop(tf as *mut u8); }
+            unsafe {
+                RawSinglePage::from_raw_and_drop(tf as *mut u8);
+            }
         }
-        if !is_child_task{
+        if !is_child_task {
             let pgt = self.pagetable.take();
             if let Some(mut pgt) = pgt {
-                let mut pgt = unsafe {
-                    pgt.as_mut().unwrap()
-                };
+                let mut pgt = unsafe { pgt.as_mut().unwrap() };
                 pgt.dealloc_proc_pagetable(self.size, tid);
             }
             self.size = 0;
@@ -398,11 +414,23 @@ impl TaskData {
         let old_size = self.size;
         if increment > 0 {
             let new_size = old_size + (increment as usize);
-            unsafe { self.pagetable.unwrap().as_mut().unwrap().uvm_alloc(old_size, new_size)? };
+            unsafe {
+                self.pagetable
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .uvm_alloc(old_size, new_size)?
+            };
             self.size = new_size;
         } else if increment < 0 {
             let new_size = old_size - ((-increment) as usize);
-            unsafe { self.pagetable.unwrap().as_mut().unwrap().uvm_dealloc(old_size, new_size) };
+            unsafe {
+                self.pagetable
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .uvm_dealloc(old_size, new_size)
+            };
             self.size = new_size;
         }
         Ok(old_size)
@@ -431,7 +459,7 @@ pub struct Task {
     /// 父主线程
     pub parent: Option<*mut Task>,
     /// 锁
-    pub mutex: SpinLock<Vec<SpinLock<usize>>>,
+    pub semaphore_list: SpinLock<Vec<Option<Semaphore>>>,
     /// 标识进程是否被杀死的原子布尔变量，用于调度和信号处理。
     pub killed: AtomicBool,
 }
@@ -445,7 +473,7 @@ impl Task {
             data: UnsafeCell::new(TaskData::new()),
             tasks: SpinLock::new(Vec::new(), "tasks"),
             parent: None,
-            mutex: SpinLock::new(Vec::new(), "mutex locks"),
+            semaphore_list: SpinLock::new(Vec::new(), "mutex locks"),
             killed: AtomicBool::new(false),
         }
     }
@@ -485,7 +513,14 @@ impl Task {
         let tdata = self.data.get_mut();
 
         // map initcode in user pagetable
-        unsafe { tdata.pagetable.unwrap().as_mut().unwrap().uvm_init(&INITCODE); }
+        unsafe {
+            tdata
+                .pagetable
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .uvm_init(&INITCODE);
+        }
         tdata.ustack_base = PAGE_SIZE;
         tdata.size = PAGE_SIZE;
 
@@ -496,17 +531,15 @@ impl Task {
 
         let init_name = b"initcode\0";
         unsafe {
-            ptr::copy_nonoverlapping(
-                init_name.as_ptr(), 
-                tdata.name.as_mut_ptr(),
-                init_name.len()
-            );
+            ptr::copy_nonoverlapping(init_name.as_ptr(), tdata.name.as_mut_ptr(), init_name.len());
         }
 
         debug_assert!(tdata.cwd.is_none());
-        tdata.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
-
-        
+        tdata.cwd = Some(
+            ICACHE
+                .namei(&ROOTIPATH)
+                .expect("cannot find root inode by b'/'"),
+        );
     }
 
     /// Abondon current process if
@@ -514,19 +547,21 @@ impl Task {
     pub fn check_abondon(&mut self, exit_status: i32) {
         if self.killed.load(Ordering::Relaxed) {
             if self.is_child_task {
-                unsafe { PROC_MANAGER.child_thread_exiting(self.index, exit_status); }
+                unsafe {
+                    PROC_MANAGER.child_thread_exiting(self.index, exit_status);
+                }
             } else {
-                unsafe { 
-                    loop{
+                unsafe {
+                    loop {
                         PROC_MANAGER.exiting(self.index, exit_status);
                         //self.yielding();
 
                         let mut parent_map = PROC_MANAGER.parents.lock();
-                        
+
                         let channel = self as *const Task as usize;
                         self.sleep(channel, parent_map);
                         parent_map = PROC_MANAGER.parents.lock();
-                    }; 
+                    }
                 }
             }
         }
@@ -538,19 +573,21 @@ impl Task {
     pub fn abondon(&mut self, exit_status: i32) {
         self.killed.store(true, Ordering::Relaxed);
         if self.is_child_task {
-            unsafe { PROC_MANAGER.child_thread_exiting(self.index, exit_status); }
+            unsafe {
+                PROC_MANAGER.child_thread_exiting(self.index, exit_status);
+            }
         } else {
-            unsafe { 
-                loop{
+            unsafe {
+                loop {
                     PROC_MANAGER.exiting(self.index, exit_status);
                     //self.yielding();
 
                     let mut parent_map = PROC_MANAGER.parents.lock();
-                        
+
                     let channel = self as *const Task as usize;
                     self.sleep(channel, parent_map);
                     parent_map = PROC_MANAGER.parents.lock();
-                }; 
+                }
             }
         }
     }
@@ -616,6 +653,9 @@ impl Task {
             25 => self.sys_thread_count(),
             26 => self.sys_thread_waittid(),
             27 => self.sys_gittid(),
+            28 => self.sys_semaphore_create(),
+            29 => self.sys_semaphore_up(),
+            30 => self.sys_semaphore_down(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }
@@ -659,8 +699,11 @@ impl Task {
         assert_eq!(guard.state, ProcState::RUNNING);
         guard.state = ProcState::RUNNABLE;
         PROCFIFO.lock().add(self as *const Task);
-        guard = unsafe { CPU_MANAGER.my_cpu_mut().sched(guard,
-            self.data.get_mut().get_context()) };
+        guard = unsafe {
+            CPU_MANAGER
+                .my_cpu_mut()
+                .sched(guard, self.data.get_mut().get_context())
+        };
         drop(guard);
     }
 
@@ -704,15 +747,13 @@ impl Task {
         // so it's okay to release lk.
         let mut excl_guard = self.excl.lock();
         drop(guard);
-
         // go to sleep
         excl_guard.channel = channel;
         excl_guard.state = ProcState::SLEEPING;
 
         unsafe {
             let c = CPU_MANAGER.my_cpu_mut();
-            excl_guard = c.sched(excl_guard, 
-                &mut (*self.data.get()).context as *mut _);
+            excl_guard = c.sched(excl_guard, &mut (*self.data.get()).context as *mut _);
         }
 
         excl_guard.channel = 0;
@@ -769,12 +810,20 @@ impl Task {
         // clone memory
         let cpgt = cdata.pagetable.as_mut().unwrap();
         let size = tdata.size;
-        if unsafe { tdata.pagetable.unwrap().as_mut().unwrap().uvm_copy(cpgt.as_mut().unwrap(), size).is_err() } {
+        if unsafe {
+            tdata
+                .pagetable
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .uvm_copy(cpgt.as_mut().unwrap(), size)
+                .is_err()
+        } {
             debug_assert_eq!(child.killed.load(Ordering::Relaxed), false);
             child.killed.store(false, Ordering::Relaxed);
-            cdata.cleanup(cpid,false);
+            cdata.cleanup(cpid, false);
             cexcl.cleanup();
-            return Err(())
+            return Err(());
         }
         cdata.size = size;
 
@@ -787,7 +836,7 @@ impl Task {
         // clone opened files and cwd
         cdata.open_files.clone_from(&tdata.open_files);
         cdata.cwd.clone_from(&tdata.cwd);
-        
+
         // copy process name
         cdata.name.copy_from_slice(&tdata.name);
 
@@ -795,14 +844,16 @@ impl Task {
 
         drop(cexcl);
 
-        unsafe { PROC_MANAGER.set_parent(child.index, self.index); }
+        unsafe {
+            PROC_MANAGER.set_parent(child.index, self.index);
+        }
 
         let mut cexcl = child.excl.lock();
         cexcl.state = ProcState::RUNNABLE;
         drop(cexcl);
 
         PROCFIFO.lock().add(child as *const Task);
-    
+
         Ok(cpid)
     }
 
@@ -817,33 +868,31 @@ impl Task {
         let child_tid = child_task.excl.lock().tid;
         child_task.parent = Some(process_ptr as *mut Task);
 
-        
         let cdata = unsafe { child_task.data.get().as_mut().unwrap() };
         // 分配子线程的trapframe
         cdata.pagetable = process_data.pagetable.clone();
-       
-        let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize};
-        match unsafe { cdata.pagetable.unwrap().as_mut().unwrap() }
-                    .map_pages(
-                        VirtAddr::from(trapframe_from_tid(child_tid)),
-                        PAGE_SIZE,
-                        PhysAddr::try_from(ctrapframe).unwrap(),
-                        PteFlag::R | PteFlag::W,
-                    ) {
-            Ok(_) => {},
-            Err(_) => {panic!("memory not enough")},
+
+        let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize };
+        match unsafe { cdata.pagetable.unwrap().as_mut().unwrap() }.map_pages(
+            VirtAddr::from(trapframe_from_tid(child_tid)),
+            PAGE_SIZE,
+            PhysAddr::try_from(ctrapframe).unwrap(),
+            PteFlag::R | PteFlag::W,
+        ) {
+            Ok(_) => {}
+            Err(_) => {
+                panic!("memory not enough")
+            }
         };
         cdata.trapframe = ctrapframe as _;
-
 
         cdata.size = process_data.size;
 
         cdata.open_files.clone_from(&process_data.open_files);
         cdata.cwd.clone_from(&process_data.cwd);
-        
+
         // copy process name
         cdata.name.copy_from_slice(&process_data.name);
-
 
         debug_assert!(cdata.pagetable == process_data.pagetable);
         let mut cexcl = child_task.excl.lock();
@@ -859,11 +908,11 @@ impl Task {
         ctrapframe.sp = ustack_bottom_by_pos(ustack_base, pos) + USER_STACK_SIZE;
         // set context
         cdata.init_context();
-    
+
         drop(cexcl);
         drop(cdata);
 
-        self.tasks.lock().push(Some(child_task as * mut Task));
+        self.tasks.lock().push(Some(child_task as *mut Task));
         PROCFIFO.lock().add(child_task as *const Task);
 
         Ok(child_tid)
@@ -887,16 +936,26 @@ impl Task {
     /// # 返回值
     /// - 返回指定参数的原始寄存器值，类型为 usize。
     fn arg_raw(&mut self, n: usize) -> usize {
-        let trapframe = unsafe { self.data.get().as_ref().unwrap().trapframe.as_ref().unwrap() };
+        let trapframe = unsafe {
+            self.data
+                .get()
+                .as_ref()
+                .unwrap()
+                .trapframe
+                .as_ref()
+                .unwrap()
+        };
         //let trapframe = self.data.get_mut().tasks[0].as_ref().unwrap().get_trap_frame();
         match n {
-            0 => {trapframe.a0}
-            1 => {trapframe.a1}
-            2 => {trapframe.a2}
-            3 => {trapframe.a3}
-            4 => {trapframe.a4}
-            5 => {trapframe.a5}
-            _ => { panic!("n is larger than 5") }
+            0 => trapframe.a0,
+            1 => trapframe.a1,
+            2 => trapframe.a2,
+            3 => trapframe.a3,
+            4 => trapframe.a4,
+            5 => trapframe.a5,
+            _ => {
+                panic!("n is larger than 5")
+            }
         }
     }
 
@@ -980,7 +1039,15 @@ impl Task {
     /// - 需要保证缓冲区 `buf` 大小足够存放用户字符串。
     fn arg_str(&mut self, n: usize, buf: &mut [u8]) -> Result<(), &'static str> {
         let addr: usize = self.arg_raw(n);
-        let pagetable = unsafe { self.data.get().as_ref().unwrap().pagetable.as_ref().unwrap() };
+        let pagetable = unsafe {
+            self.data
+                .get()
+                .as_ref()
+                .unwrap()
+                .pagetable
+                .as_ref()
+                .unwrap()
+        };
         unsafe { pagetable.as_mut().unwrap().copy_in_str(addr, buf)? };
         Ok(())
     }
@@ -1020,9 +1087,9 @@ impl Task {
         } else {
             let mut ret: usize = 0;
             match pd.copy_in(
-                addr, 
-                &mut ret as *mut usize as *mut u8, 
-                mem::size_of::<usize>()
+                addr,
+                &mut ret as *mut usize as *mut u8,
+                mem::size_of::<usize>(),
             ) {
                 Ok(_) => Ok(ret),
                 Err(_) => Err("pagetable copy_in eror"),
@@ -1031,9 +1098,15 @@ impl Task {
     }
 
     /// Fetch a null-nullterminated string from virtual address `addr` into the kernel buffer.
-    fn fetch_str(&self, addr: usize, dst: &mut [u8]) -> Result<(), &'static str>{
+    fn fetch_str(&self, addr: usize, dst: &mut [u8]) -> Result<(), &'static str> {
         let pd = unsafe { self.data.get().as_ref().unwrap() };
-        unsafe { pd.pagetable.unwrap().as_ref().unwrap().copy_in_str(addr, dst) }
+        unsafe {
+            pd.pagetable
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .copy_in_str(addr, dst)
+        }
     }
 }
 

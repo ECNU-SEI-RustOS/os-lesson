@@ -231,22 +231,27 @@ pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>
     }
 
 
-    let old_pgt = unsafe { tdata.pagetable.replace(pgt).unwrap().as_mut().unwrap() };
+    
     let old_size = tdata.size;
     tdata.size = proc_size;
     trapframe.epc = elf.entry as usize;
     trapframe.sp = stack_pointer;
     
     
-    //add_task(Arc::clone(&task));
+
     
     // 清理旧的pagetable
-    old_pgt.dealloc_proc_pagetable(old_size,tid);
-    //drop(unsafe { Box::from_raw(old_pgt as *mut PageTable) });
-    old_pgt.clean();
-    unsafe {
-        RawSinglePage::from_raw_and_drop(old_pgt as *mut _ as *mut u8);
+    let old_pgt = tdata.pagetable.replace(pgt);
+    if let Some(old_pgt) = old_pgt{
+        let old_pgt = unsafe {old_pgt.as_mut().unwrap() };
+        old_pgt.dealloc_proc_pagetable(old_size,tid);
+        //drop(unsafe { Box::from_raw(old_pgt as *mut PageTable) });
+        old_pgt.clean();
+        unsafe {
+            RawSinglePage::from_raw_and_drop(old_pgt as *mut _ as *mut u8);
+        }
     }
+    
 
     Ok(argc)
 }

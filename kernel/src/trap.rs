@@ -188,14 +188,14 @@ fn clock_intr() {
 }
 
 /// Sleep for a specified number of ticks.
-pub fn clock_sleep(process: &Task, count: usize) -> Result<(), ()> {
+pub fn clock_sleep(task: &Task, count: usize) -> Result<(), ()> {
     let mut guard = TICKS.lock();
     let old_ticks = *guard;
     while (*guard - old_ticks) < Wrapping(count) {
-        if process.killed.load(Ordering::Relaxed) {
+        if task.killed.load(Ordering::Relaxed) {
             return Err(())
         }
-        process.sleep(&TICKS as *const _ as usize, guard);
+        task.sleep(&TICKS as *const _ as usize, guard);
         guard = TICKS.lock();
     }
     Ok(())
