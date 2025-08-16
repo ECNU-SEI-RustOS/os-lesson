@@ -7,9 +7,23 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::consts::fs::{BPB, FSMAGIC};
 use super::{BCACHE, BufData, inode::IPB};
 
+/// 全局超级块实例
+///
+/// # 安全性
+/// - 静态可变变量，需在单线程环境下初始化
+/// - 通过`AtomicBool`保证初始化状态同步
 pub static mut SUPER_BLOCK: SuperBlock = SuperBlock::uninit();
 
-/// In-memory copy of superblock
+/// 内存中的超级块副本
+///
+/// # 设计说明
+/// - 封装磁盘上的`RawSuperBlock`结构
+/// - 使用`MaybeUninit`延迟初始化
+/// - 通过原子标志`initialized`确保线程安全访问
+///
+/// # 同步保证
+/// - 实现`Sync`允许跨线程共享引用
+/// - 写操作仅在初始化时发生，之后只读
 #[derive(Debug)]
 pub struct SuperBlock {
     data: MaybeUninit<RawSuperBlock>,
@@ -26,8 +40,29 @@ impl SuperBlock {
         }
     }
 
-    /// Read and init the super block from disk into memory.
-    /// SAFETY: it should only be called by the first regular process alone.
+    /// 从磁盘设备读取并初始化超级块
+    ///
+    /// # 功能说明
+    /// 1. 从指定设备的第一个块（块号1）读取超级块
+    /// 2. 验证文件系统魔数（FSMAGIC）
+    /// 3. 将数据复制到内存中的全局超级块
+    ///
+    /// # 参数
+    /// - `dev`: 文件系统所在设备号
+    ///
+    /// # 安全性
+    /// - 必须由第一个常规进程单独调用
+    /// - 设备号`dev`必须对应有效的文件系统设备
+    ///
+    /// # Panics
+    /// - 文件系统魔数不匹配时触发panic
+    ///
+    /// # 初始化流程
+    /// 1. 检查对齐要求（调试模式）
+    /// 2. 通过缓冲缓存读取块1
+    /// 3. 复制数据到内存超级块
+    /// 4. 验证魔数
+    /// 5. 设置初始化标志
     pub unsafe fn init(&mut self, dev: u32) {
         debug_assert_eq!(mem::align_of::<BufData>() % mem::align_of::<RawSuperBlock>(), 0);
         if self.initialized.load(Ordering::Relaxed) {
@@ -50,7 +85,10 @@ impl SuperBlock {
         println!("super block data: {:?}", self.data.as_ptr().as_ref().unwrap());
     }
 
-    /// Read the info of super block.
+    /// 获取已初始化的超级块只读引用
+    ///
+    /// # 前置条件
+    /// - 超级块必须已完成初始化
     fn read(&self) -> &RawSuperBlock {
         debug_assert!(self.initialized.load(Ordering::Relaxed));
         unsafe {
@@ -58,16 +96,25 @@ impl SuperBlock {
         }
     }
 
-    /// Load the log info of super block.
-    /// Return starting block and usable blocks for log.
+    /// 读取日志区域信息
+    ///
+    /// # 返回值
+    /// 元组`(起始块号, 日志块数量)`
     pub fn read_log(&self) -> (u32, u32) {
         let sb = self.read();
         (sb.logstart, sb.nlog)
     }
 
-    /// Given a inode number.
-    /// Return the blockno of the block this inode resides.
-    /// Panic if the queryed inode out of range
+    /// 定位索引节点所在的磁盘块
+    ///
+    /// # 参数
+    /// - `inum`: 要查询的索引节点号
+    ///
+    /// # 返回值
+    /// 包含该索引节点的磁盘块号
+    ///
+    /// # Panics
+    /// 当`inum`超出索引节点总数时触发panic
     pub fn locate_inode(&self, inum: u32) -> u32 {
         let sb = self.read();
         if inum >= sb.ninodes {
@@ -77,36 +124,54 @@ impl SuperBlock {
         blockno
     }
 
-    /// Return the total size of inodes.
+    /// 获取文件系统索引节点总数
     pub fn inode_size(&self) -> u32 {
         let sb = self.read();
         sb.ninodes
     }
 
-    /// Given a block number in the disk.
-    /// Return the relevant block number of the (controlling) bitmap block.
+    /// 定位块对应的位图块
+    ///
+    /// # 功能说明
+    /// 给定数据块号，返回管理该块的位图块号
+    ///
+    /// # 参数
+    /// - `blockno`: 要查询的数据块号
+    ///
+    /// # 返回值
+    /// 管理该块的位图块号
+    ///
+    /// # 计算原理
+    /// 位图块号 = 位图起始块 + (块号 / 每块管理的位数)
     pub fn bitmap_blockno(&self, blockno: u32) -> u32 {
         let sb = self.read();
         (blockno / BPB) + sb.bmapstart
     }
 
-    /// The total count of blocks in the disk.
+    /// 获取文件系统总块数
     pub fn size(&self) -> u32 {
         let sb = self.read();
         sb.size
     }
 }
 
-/// Raw super block describes the disk layout.
+/// 磁盘上的原始超级块结构
+///
+/// # 内存布局
+/// - `#[repr(C)]` 确保C兼容布局
+/// - 字段排列与磁盘完全一致
+///
+/// # 字段说明
+/// 所有字段均为大端序存储，需转换成本机字节序使用
 #[repr(C)]
 #[derive(Debug)]
 struct RawSuperBlock {
-    magic: u32,      // Must be FSMAGIC
-    size: u32,       // Size of file system image (blocks)
-    nblocks: u32,    // Number of data blocks
-    ninodes: u32,    // Number of inodes
-    nlog: u32,       // Number of log blocks
-    logstart: u32,   // Block number of first log block
-    inodestart: u32, // Block number of first inode block
-    bmapstart: u32,  // Block number of first free map block
+    magic: u32,      // 文件系统魔数，必须为`FSMAGIC`
+    size: u32,       // 文件系统映像总块数
+    nblocks: u32,    // 数据块数量（不含元数据）
+    ninodes: u32,    // 索引节点总数
+    nlog: u32,       // 日志块数量
+    logstart: u32,   // 第一个日志块的块号
+    inodestart: u32, // 第一个索引节点块的块号
+    bmapstart: u32,  // 第一个位图块的块号
 }
