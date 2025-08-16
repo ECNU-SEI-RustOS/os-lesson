@@ -10,7 +10,7 @@ use core::ptr;
 use core::cell::UnsafeCell;
 use crate::consts::{KERNEL_STACK_SIZE, MAX_TASKS_PER_PROC, USER_STACK_SIZE};
 use crate::mm::pagetable::ustack_bottom_by_pos;
-use crate::process::task::task::trapframe_from_tid;
+use crate::process::task::trapframe_from_tid;
 use crate::process::task::tid::TID_ALLOCATOR;
 use crate::process::PROCFIFO;
 use crate::consts::{PAGE_SIZE, fs::{NFILE, ROOTIPATH}};

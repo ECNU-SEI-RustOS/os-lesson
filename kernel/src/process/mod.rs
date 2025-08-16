@@ -16,7 +16,7 @@ use crate::mm::{
 use crate::process::proc::manager::ProcessFIFO;
 use crate::process::proc::pid::PID_ALLOCATOR;
 use crate::process::proc::ProcData;
-use crate::process::task::task::trapframe_from_tid;
+use crate::process::task::trapframe_from_tid;
 use crate::process::task::tid::TID_ALLOCATOR;
 use crate::spinlock::SpinLock;
 use crate::trap::user_trap_ret;

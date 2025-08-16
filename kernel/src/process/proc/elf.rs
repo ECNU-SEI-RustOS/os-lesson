@@ -4,10 +4,8 @@ use alloc::boxed::Box;
 use alloc::str;
 use core::{cmp::min, convert::TryFrom, mem::{self, MaybeUninit}};
 
-use crate::process::proc::manager::add_task;
-use crate::process::PROCFIFO;
-use crate::{consts::MAX_TASKS_PER_PROC, mm::pagetable::ustack_bottom_by_pos, process::task::task::Task};
-use crate::{consts::{MAXARG, MAXARGLEN, MAXVA, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
+use crate::{consts::MAX_TASKS_PER_PROC, mm::pagetable::ustack_bottom_by_pos};
+use crate::{consts::{MAXARG, MAXARGLEN, PAGE_SIZE, USER_STACK_SIZE}, sleeplock::SleepLockGuard};
 use crate::mm::{pg_round_up, Addr, Address, PageTable, RawPage, RawSinglePage, VirtAddr};
 use crate::fs::{ICACHE, Inode, LOG, InodeData};
 

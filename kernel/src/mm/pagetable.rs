@@ -5,7 +5,7 @@ use crate::consts::{ConstAddr, MAX_TASKS_PER_PROC, TRAPFRAME, USER_STACK_SIZE};
 use crate::consts::{PAGE_SIZE, PGSHIFT, SATP_SV39, SV39FLAGLEN, TRAMPOLINE, USERTEXT};
 use crate::mm::page_allocator::{page_alloc, PAGE_ALLOCATOR};
 use crate::mm::{pagetable, trapframe_from_pid, RawQuadPage};
-use crate::process::task::task::trapframe_from_tid;
+use crate::process::task::trapframe_from_tid;
 
 use alloc::boxed::Box;
 use core::{ptr};

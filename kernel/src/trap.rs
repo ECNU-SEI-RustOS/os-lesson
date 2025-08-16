@@ -3,8 +3,8 @@
 use core::num::Wrapping;
 use core::sync::atomic::Ordering;
 
-use crate::mm::{trapframe_from_pid, VirtAddr};
-use crate::{consts::{ConstAddr, PAGE_SIZE, TRAMPOLINE, TRAPFRAME, UART0_IRQ, USER_STACK_SIZE, VIRTIO0_IRQ}, process::{Process, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
+use crate::process::task::trapframe_from_tid;
+use crate::{consts::{ TRAMPOLINE, UART0_IRQ, VIRTIO0_IRQ}, process::{Process, PROC_MANAGER}, register::scause::{ Exception, Interrupt, Scause, Trap}};
 use crate::register::{stvec, sstatus, sepc, stval, sip,
     scause::{self}};
 use crate::process::{CPU_MANAGER, CpuManager};
@@ -83,7 +83,7 @@ pub unsafe extern fn user_trap() {
 
     user_trap_ret();
 }
-use crate::process::task::task::trapframe_from_tid;
+
 /// Return to user space
 pub unsafe fn user_trap_ret() -> ! {
     // disable interrupts and prepare sret to user mode

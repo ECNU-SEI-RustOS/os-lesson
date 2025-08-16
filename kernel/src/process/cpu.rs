@@ -3,8 +3,6 @@ use alloc::sync::Arc;
 
 use super::{proc::ProcExcl, Context, ProcState, Process, PROC_MANAGER};
 use crate::consts::NCPU;
-use crate::process::proc::manager::fetch_task;
-use crate::process::task::task::{Task, TaskStatus};
 use crate::process::PROCFIFO;
 use crate::register::{sstatus, tp};
 use crate::spinlock::SpinLockGuard;
@@ -102,19 +100,6 @@ impl CpuManager {
         unsafe { &mut *process }
     }
 
-    pub fn current_task(&self) -> Arc<Task> {
-        let task;
-        push_off();
-        unsafe {
-            let cpu = self.my_cpu();
-            if cpu.task.is_none() {
-                panic!("cpu{}: no task running",Self::cpu_id());
-            }
-            task = Arc::clone(cpu.task.as_ref().unwrap());
-        }
-        pop_off();
-        task
-    }
 
     /// # 功能说明
     /// CPU 调度器主循环，实现多核环境下对进程的抢占式调度。
@@ -204,8 +189,6 @@ pub struct Cpu {
     /// 如果没有运行进程，则为 null。
     process: Option<*mut Process>,
 
-    task: Option<Arc<Task>>,
-
     /// 调度器上下文，用于保存调度器自身的寄存器状态，
     /// 在进程切换时作为切换目标上下文。
     scheduler: Context,
@@ -223,7 +206,6 @@ impl Cpu {
     const fn new() -> Self {
         Self {
             process: None,
-            task:None,
             scheduler: Context::new(),
             noff: 0,
             intena: false,
