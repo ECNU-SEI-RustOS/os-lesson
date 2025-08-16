@@ -68,7 +68,7 @@ pub unsafe fn kvm_init() {
     debug_assert_eq!(mem::size_of::<RawQuadPage>(), PGSIZE*4);
     debug_assert_eq!(mem::align_of::<RawQuadPage>(), PGSIZE);
 
-    // uart registers
+    // UART 寄存器
     kvm_map(
         VirtAddr::from(UART0),
         PhysAddr::from(UART0),
@@ -76,7 +76,7 @@ pub unsafe fn kvm_init() {
         PteFlag::R | PteFlag::W,
     );
 
-    // virtio mmio disk interface
+    // virtio 内存映射 I/O 磁盘接
     kvm_map(
         VirtAddr::from(VIRTIO0),
         PhysAddr::from(VIRTIO0),
@@ -100,14 +100,14 @@ pub unsafe fn kvm_init() {
         PteFlag::R | PteFlag::W,
     );
 
-    // etext exported out of kernel.ld
-    // supposed to be page(0x1000) aligned
+    // etext 从 kernel.ld 中导出
+    // 应按页（0x1000 字节）对齐
     extern "C" {
         fn etext();
     }
     let etext = etext as usize;
 
-    // map kernel text executable and read-only.
+    // 将内核代码段映射为可执行且只读
     kvm_map(
         VirtAddr::from(KERNBASE),
         PhysAddr::from(KERNBASE),
@@ -115,7 +115,7 @@ pub unsafe fn kvm_init() {
         PteFlag::R | PteFlag::X,
     );
 
-    // map kernel data and the physical RAM we'll make use of.
+    // 映射内核数据段和我们将要使用的物理内存
     kvm_map(
         VirtAddr::try_from(etext).unwrap(),
         PhysAddr::try_from(etext).unwrap(),
@@ -123,8 +123,7 @@ pub unsafe fn kvm_init() {
         PteFlag::R | PteFlag::W,
     );
 
-    // map the trampoline for trap entry/exit to
-    // the highest virtual address in the kernel.
+    // 将用于陷阱进入 / 退出的跳板页映射到内核中最高的虚拟地址。
     extern "C" {
         fn trampoline();
     }
