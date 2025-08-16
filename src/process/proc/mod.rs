@@ -74,7 +74,7 @@ impl ProcExcl {
         }
     }
 
-    /// Clean up the content in [`ProcExcl`],
+    /// 清除 [`ProcExcl`]的内容
     pub fn cleanup(&mut self) {
         self.pid = 0;
         self.channel = 0;
@@ -187,13 +187,13 @@ impl ProcData {
     pub fn user_ret_prepare(&mut self) -> usize {
         let tf: &mut TrapFrame = unsafe { self.tf.as_mut().unwrap() };
         tf.kernel_satp = satp::read();
-        // current kernel stack's content is cleaned
-        // after returning to the kernel space
+        // 当前内核栈的内容已被清理
+        // 返回内核空间之后
         tf.kernel_sp = self.kstack + PGSIZE*4;
         tf.kernel_trap = user_trap as usize;
         tf.kernel_hartid = unsafe { CpuManager::cpu_id() };
 
-        // restore the user pc previously stored in sepc
+        // 恢复之前存储在 sepc 中的用户程序计数器
         sepc::write(tf.epc);
 
         self.pagetable.as_ref().unwrap().as_satp()
@@ -429,11 +429,11 @@ impl Proc {
     pub fn user_init(&mut self) {
         let pd = self.data.get_mut();
 
-        // map initcode in user pagetable
+        // 在用户页表中映射初始化代码
         pd.pagetable.as_mut().unwrap().uvm_init(&INITCODE);
         pd.sz = PGSIZE;
 
-        // prepare return pc and stack pointer
+        // 准备返回程序计数器和栈指针
         let tf = unsafe { pd.tf.as_mut().unwrap() };
         tf.epc = 0;
         tf.sp = PGSIZE;
@@ -451,17 +451,16 @@ impl Proc {
         pd.cwd = Some(ICACHE.namei(&ROOTIPATH).expect("cannot find root inode by b'/'"));
     }
 
-    /// Abondon current process if
-    /// the killed flag is true
+    /// 如果 killed 标志为 true，则终止当前进程
     pub fn check_abondon(&mut self, exit_status: i32) {
         if self.killed.load(Ordering::Relaxed) {
             unsafe { PROC_MANAGER.exiting(self.index, exit_status); }
         }
     }
 
-    /// Abondon current process by:
-    /// 1. setting its killed flag to true
-    /// 2. and then exit
+    /// 通过以下方式终止当前进程：
+    /// 1. 将其 killed 标志设置为 true
+    /// 2. 然后退出
     pub fn abondon(&mut self, exit_status: i32) {
         self.killed.store(true, Ordering::Relaxed);
         unsafe { PROC_MANAGER.exiting(self.index, exit_status); }
@@ -601,16 +600,12 @@ impl Proc {
     /// - 保证在调用时持有适当的锁，避免竞态条件和死锁。
     /// - 进程状态和通道的修改均在锁保护下完成，保证线程安全。
     pub fn sleep<T>(&self, channel: usize, guard: SpinLockGuard<'_, T>) {
-        // Must acquire p->lock in order to
-        // change p->state and then call sched.
-        // Once we hold p->lock, we can be
-        // guaranteed that we won't miss any wakeup
-        // (wakeup locks p->lock),
-        // so it's okay to release lk.
+        // 必须先获取 p->lock 锁，才能修改 p->state，然后调用 sched。
+        // 一旦我们持有 p->lock 锁，就可以确保不会错过任何唤醒操作（唤醒操作会锁定 p->lock），因此释放 lk 锁是安全的。
         let mut excl_guard = self.excl.lock();
         drop(guard);
 
-        // go to sleep
+        // 进入睡眠
         excl_guard.channel = channel;
         excl_guard.state = ProcState::SLEEPING;
 
@@ -668,7 +663,7 @@ impl Proc {
         let mut cexcl = child.excl.lock();
         let cdata = unsafe { child.data.get().as_mut().unwrap() };
 
-        // clone memory
+        // 克隆内存
         let cpgt = cdata.pagetable.as_mut().unwrap();
         let size = pdata.sz;
         if pdata.pagetable.as_mut().unwrap().uvm_copy(cpgt, size).is_err() {
@@ -680,17 +675,17 @@ impl Proc {
         }
         cdata.sz = size;
 
-        // clone trapframe and return 0 on a0
+        // 克隆陷阱帧并在 a0 寄存器上返回 0
         unsafe {
             ptr::copy_nonoverlapping(pdata.tf, cdata.tf, 1);
             cdata.tf.as_mut().unwrap().a0 = 0;
         }
 
-        // clone opened files and cwd
+        // 克隆已打开的文件和当前工作目录
         cdata.open_files.clone_from(&pdata.open_files);
         cdata.cwd.clone_from(&pdata.cwd);
         
-        // copy process name
+        // 复制进程名称
         cdata.name.copy_from_slice(&pdata.name);
 
         let cpid = cexcl.pid;
@@ -736,16 +731,16 @@ impl Proc {
         }
     }
 
-    /// Fetch 32-bit register value.
-    /// Note: `as` conversion is performed between usize and i32
+    /// 获取 32 位寄存器的值。
+    /// 注意：在 usize 和 i32 之间会进行as转换
     #[inline]
     fn arg_i32(&self, n: usize) -> i32 {
         self.arg_raw(n) as i32
     }
 
-    /// Fetch a raw user virtual address from register value.
-    /// Note: This raw address could be null,
-    ///     and it might only be used to access user virtual address.
+    /// 从寄存器值中获取原始用户虚拟地址。
+    /// 注意：此原始地址可能为 null，
+    /// 且它可能仅用于访问用户虚拟地
     #[inline]
     fn arg_addr(&self, n: usize) -> usize {
         self.arg_raw(n)
@@ -866,14 +861,14 @@ impl Proc {
         }
     }
 
-    /// Fetch a null-nullterminated string from virtual address `addr` into the kernel buffer.
+    ///从虚拟地址addr获取一个以空字符结尾的字符串到内核缓冲区中。
     fn fetch_str(&self, addr: usize, dst: &mut [u8]) -> Result<(), &'static str>{
         let pd = unsafe { self.data.get().as_ref().unwrap() };
         pd.pagetable.as_ref().unwrap().copy_in_str(addr, dst)
     }
 }
 
-/// first user program that calls exec("/init")
+/// 第一个调用 exec ("/init") 的用户程序
 static INITCODE: [u8; 51] = [
     0x17, 0x05, 0x00, 0x00, 0x13, 0x05, 0x05, 0x02, 0x97, 0x05, 0x00, 0x00, 0x93, 0x85, 0x05, 0x02,
     0x9d, 0x48, 0x73, 0x00, 0x00, 0x00, 0x89, 0x48, 0x73, 0x00, 0x00, 0x00, 0xef, 0xf0, 0xbf, 0xff,
