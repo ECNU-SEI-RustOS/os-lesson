@@ -10,6 +10,7 @@ use core::mem;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
 use crate::process::proc::ProcState;
+use crate::process::sync::sem::{self, Semaphore};
 use crate::process::{PROC_MANAGER};
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
 use crate::register::clint;
@@ -47,9 +48,64 @@ pub trait Syscall {
     fn sys_thread_count(&mut self) -> SysResult;
     fn sys_thread_waittid(&mut self) -> SysResult;
     fn sys_gittid(&mut self) -> SysResult;
+    fn sys_semaphore_create(&mut self) -> SysResult;
+    fn sys_semaphore_up(&mut self) -> SysResult;
+    fn sys_semaphore_down(&mut self) -> SysResult;
 }
 
 impl Syscall for Task {
+    fn sys_semaphore_create(&mut self) -> SysResult {
+        let res_count = self.arg_raw(0);
+        let mut pos = 0;
+        let mut semaphore_list = if self.is_child_task {
+            unsafe { self.parent.unwrap().as_ref().unwrap().semaphore_list.lock() }
+        } else {
+            self.semaphore_list.lock()
+        };
+        let id = if let Some(id) = semaphore_list
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.is_none())
+            .map(|(id, _)| id)
+        {
+            semaphore_list[id] = Some(Semaphore::new(res_count));
+            pos = id;
+        } else {
+            semaphore_list
+                .push(Some(Semaphore::new(res_count)));
+            pos = semaphore_list.len() - 1;
+        };
+        Ok(pos)
+    }
+
+    fn sys_semaphore_up(&mut self) -> SysResult {
+        let sem_id = self.arg_raw(0);
+        let semaphore_list = if self.is_child_task {
+            unsafe { self.parent.unwrap().as_ref().unwrap().semaphore_list.lock() }
+        } else {
+            self.semaphore_list.lock()
+        };
+
+        let sem = semaphore_list[sem_id].as_ref().unwrap() as *const Semaphore;
+        drop(semaphore_list);
+        let sem = unsafe { sem.as_ref().unwrap() };
+        sem.up();
+        Ok(0)
+    }
+
+    fn sys_semaphore_down(&mut self) -> SysResult {
+        let sem_id = self.arg_raw(0);
+        let semaphore_list = if self.is_child_task {
+            unsafe { self.parent.unwrap().as_ref().unwrap().semaphore_list.lock() }
+        } else {
+            self.semaphore_list.lock()
+        };
+        let sem = semaphore_list[sem_id].as_ref().unwrap() as *const Semaphore;
+        drop(semaphore_list);
+        let sem = unsafe { sem.as_ref().unwrap() };
+        sem.down();
+        Ok(0)
+    }
     fn sys_thread_create(&mut self) -> SysResult {
         let entry = self.arg_raw(0);
         let arg = self.arg_raw(1);
