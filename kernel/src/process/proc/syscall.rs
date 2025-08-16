@@ -191,7 +191,7 @@ impl Syscall for Task {
             }
         }
         
-        unreachable!("process exit");
+        unreachable!("task exit");
     }
 
     /// Wait for any child(if any) process to exit.
@@ -266,7 +266,7 @@ impl Syscall for Task {
         ret.map(|count| count as usize)
     }
 
-    /// Kill a process.
+    /// Kill a process(main thread).
     /// Note: Other signals are not supported yet.
     fn sys_kill(&mut self) -> SysResult {
         let pid = self.arg_i32(0);
@@ -282,7 +282,7 @@ impl Syscall for Task {
         ret.map(|()| 0)
     }
 
-    /// Load an elf binary and execuate it the currrent process context.
+    /// Load an elf binary and execuate it the currrent main thread context.
     fn sys_exec(&mut self) -> SysResult {
         let mut path: [u8; MAXPATH] = [0; MAXPATH];
         self.arg_str(0, &mut path).map_err(syscall_warning)?;
@@ -424,7 +424,7 @@ impl Syscall for Task {
         ret
     }
 
-    /// Put the current process into sleep.
+    /// Put the current task into sleep.
     fn sys_sleep(&mut self) -> SysResult {
         let count = self.arg_raw(0);
         let count = count as usize;

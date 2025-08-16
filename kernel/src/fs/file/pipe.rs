@@ -13,14 +13,14 @@ use super::{File, FileInner};
 
 /// 表示一个内核态的管道（pipe）通信结构，封装了对 `PipeInner` 的同步访问。
 ///
-/// `Pipe` 提供了对进程间通信（IPC）的支持，允许一个进程写入数据，
-/// 并被另一个进程读取。内部通过 [`SpinLock`] 实现对 [`PipeInner`] 的互斥访问，
+/// `Pipe` 提供了对进程（主线程）间通信（IPC）的支持，允许一个进程（主线程）写入数据，
+/// 并被另一个进程（主线程）读取。内部通过 [`SpinLock`] 实现对 [`PipeInner`] 的互斥访问，
 /// 以保障多核环境下并发读写的正确性与一致性。
 ///
-/// 管道采用固定大小的环形缓冲区进行数据传输，并结合进程的休眠与唤醒机制，
+/// 管道采用固定大小的环形缓冲区进行数据传输，并结合进程（主线程）的休眠与唤醒机制，
 /// 实现对读写双方的阻塞控制和同步通信能力。
 ///
-/// 本结构体通常由 [`FileInner::Pipe`] 所引用，通过 [`File`] 文件抽象与用户进程交互。
+/// 本结构体通常由 [`FileInner::Pipe`] 所引用，通过 [`File`] 文件抽象与用户进程（主线程）交互。
 #[derive(Debug)]
 pub struct Pipe(SpinLock<PipeInner>);
 
@@ -30,7 +30,7 @@ impl Pipe {
     ///
     /// # 功能说明
     /// 该函数初始化一个管道对象，并创建两个 [`File`] 实例，分别用于读端和写端，
-    /// 从而支持用户进程之间的双向通信。该函数对应于 Unix 风格的 pipe() 系统调用实现，
+    /// 从而支持用户进程（主线程）之间的双向通信。该函数对应于 Unix 风格的 pipe() 系统调用实现，
     /// 并将内核态的管道结构抽象为用户可读写的文件接口。
     ///
     /// # 流程解释
@@ -91,17 +91,17 @@ impl Pipe {
     /// 从管道中读取数据，将字节复制到用户空间缓冲区中。
     ///
     /// # 功能说明
-    /// 尝试从当前管道读取最多 `count` 个字节，将读取的数据复制到用户进程的地址空间中。
-    /// 若当前管道为空且写端仍开启，则进程进入休眠等待写端写入数据。
+    /// 尝试从当前管道读取最多 `count` 个字节，将读取的数据复制到用户进程（主线程）的地址空间中。
+    /// 若当前管道为空且写端仍开启，则进程（主线程）进入休眠等待写端写入数据。
     /// 支持环形缓冲区读取、读写阻塞同步，并在数据可读或写端关闭后恢复执行。
     ///
     /// # 流程解释
-    /// - 获取当前进程指针 `p`；
+    /// - 获取当前进程（主线程）指针 `p`；
     /// - 通过 `SpinLock` 加锁管道内部状态；
-    /// - 若管道为空且写端未关闭，则调用 `p.sleep()` 阻塞当前进程，直到有数据可读或写端关闭；
+    /// - 若管道为空且写端未关闭，则调用 `p.sleep()` 阻塞当前进程（主线程），直到有数据可读或写端关闭；
     /// - 重新加锁后计算可读字节数（读写指针差值），逐字节复制到用户空间；
     /// - 若中途发生复制错误，则提前结束读取；
-    /// - 更新读指针 `read_cnt`，并唤醒可能因缓冲区满而阻塞的写进程。
+    /// - 更新读指针 `read_cnt`，并唤醒可能因缓冲区满而阻塞的写进程（主线程）。
     ///
     /// # 参数
     /// - `addr`: 用户空间中的目标地址，数据将复制到该地址开始的缓冲区；
@@ -109,27 +109,27 @@ impl Pipe {
     ///
     /// # 返回值
     /// - `Ok(n)`：实际成功读取并复制的字节数 `n`；
-    /// - `Err(())`：如果当前进程被标记为已终止（`killed == true`），则返回错误。
+    /// - `Err(())`：如果当前进程（主线程）被标记为已终止（`killed == true`），则返回错误。
     ///
     /// # 可能的错误
-    /// - 进程在等待数据期间被外部标记为终止，读取中断，返回 `Err(())`；
+    /// - 进程（主线程）在等待数据期间被外部标记为终止，读取中断，返回 `Err(())`；
     /// - 复制数据至用户空间失败时，提前终止读取过程，返回部分数据（非错误）。
     ///
     /// # 安全性
-    /// - 使用 `unsafe` 获取当前进程指针 `p`，需确保调用者在内核上下文中且该指针有效；
+    /// - 使用 `unsafe` 获取当前进程（主线程）指针 `p`，需确保调用者在内核上下文中且该指针有效；
     /// - 用户空间地址 `addr` 的有效性由 `copy_out()` 检查与处理；
     /// - 锁的获取、释放、睡眠与唤醒操作在受控环境中调用，确保不会造成死锁或竞态。
     pub(super) fn read(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let process = unsafe { CPU_MANAGER.my_task() };
+        let task = unsafe { CPU_MANAGER.my_task() };
 
         let mut pipe = self.0.lock();
 
         // wait for data to be written
         while pipe.read_cnt == pipe.write_cnt && pipe.write_open {
-            if process.killed.load(Ordering::Relaxed) {
+            if task.killed.load(Ordering::Relaxed) {
                 return Err(())
             }
-            process.sleep(&pipe.read_cnt as *const Wrapping<_> as usize, pipe);
+            task.sleep(&pipe.read_cnt as *const Wrapping<_> as usize, pipe);
             pipe = self.0.lock();
         }
 
@@ -140,7 +140,7 @@ impl Pipe {
             let index = (pipe.read_cnt.0 % PIPESIZE_U32) as usize;
             let byte = pipe.data[index];
             pipe.read_cnt += Wrapping(1);
-            if process.data.get_mut().copy_out(&byte as *const u8, addr+(i as usize), 1).is_err() {
+            if task.data.get_mut().copy_out(&byte as *const u8, addr+(i as usize), 1).is_err() {
                 read_count = i;
                 break
             }
@@ -154,18 +154,18 @@ impl Pipe {
     ///
     /// # 功能说明
     /// 尝试从用户空间地址 `addr` 读取最多 `count` 个字节，并写入当前管道的缓冲区中。
-    /// 如果管道写满，则当前进程会被阻塞直到缓冲区中有可用空间或读端被关闭。
+    /// 如果管道写满，则当前进程（主线程）会被阻塞直到缓冲区中有可用空间或读端被关闭。
     /// 支持读写端同步机制和用户态数据拷贝，并自动处理写阻塞与唤醒逻辑。
     ///
     /// # 流程解释
-    /// - 获取当前进程指针 `p`；
+    /// - 获取当前进程（主线程）指针 `p`；
     /// - 加锁管道以访问内部状态；
     /// - 持续尝试写入数据：
     ///   - 若写端尚未完成，且缓冲区未满，则从用户空间复制一个字节至缓冲区；
-    ///   - 若缓冲区已满，则唤醒读进程，并将当前进程阻塞在写端等待点；
-    ///   - 若读端已关闭或当前进程被终止，则立即中断写入并返回错误。
+    ///   - 若缓冲区已满，则唤醒读进程（主线程），并将当前进程（主线程）阻塞在写端等待点；
+    ///   - 若读端已关闭或当前进程（主线程）被终止，则立即中断写入并返回错误。
     /// - 每次写入后推进写指针 `write_cnt`，最终返回成功写入的字节数。
-    /// - 写入完成后唤醒读进程以通知数据可读。
+    /// - 写入完成后唤醒读进程（主线程）以通知数据可读。
     ///
     /// # 参数
     /// - `addr`：用户空间中源缓冲区的起始地址；
@@ -173,37 +173,37 @@ impl Pipe {
     ///
     /// # 返回值
     /// - `Ok(n)`：成功写入的字节数 `n`；
-    /// - `Err(())`：当读端已关闭或进程已被标记为终止时，返回错误。
+    /// - `Err(())`：当读端已关闭或进程（主线程）已被标记为终止时，返回错误。
     ///
     /// # 可能的错误
     /// - 若读端被关闭，`read_open == false`，则立即返回 `Err(())`；
-    /// - 若当前进程在阻塞期间被标记为 `killed`，则中止写入并返回错误；
+    /// - 若当前进程（主线程）在阻塞期间被标记为 `killed`，则中止写入并返回错误；
     /// - 若 `copy_in()` 从用户地址复制失败，则提前终止写入，返回已写入的字节数。
     ///
     /// # 安全性
-    /// - 使用 `unsafe` 获取当前进程指针 `p`，调用上下文需保证在有效的内核态；
+    /// - 使用 `unsafe` 获取当前进程（主线程）指针 `p`，调用上下文需保证在有效的内核态；
     /// - 用户空间地址的读取通过 `copy_in()` 进行边界检查与错误控制；
-    /// - 锁操作、进程休眠与唤醒在管道内部状态一致性前提下安全使用；
+    /// - 锁操作、进程（主线程）休眠与唤醒在管道内部状态一致性前提下安全使用；
     /// - 写入操作严格限制在环形缓冲区有效索引范围内，避免越界访问。
     pub(super) fn write(&self, addr: usize, count: u32) -> Result<u32, ()> {
-        let process = unsafe { CPU_MANAGER.my_task() };
+        let task = unsafe { CPU_MANAGER.my_task() };
 
         let mut pipe = self.0.lock();
 
         let mut write_count = 0;
         while write_count < count {
-            if !pipe.read_open || process.killed.load(Ordering::Relaxed) {
+            if !pipe.read_open || task.killed.load(Ordering::Relaxed) {
                 return Err(())
             }
 
             if pipe.write_cnt == pipe.read_cnt + Wrapping(PIPESIZE_U32) {
                 // wait for data to be read
                 unsafe { PROC_MANAGER.wakeup(&pipe.read_cnt as *const Wrapping<_> as usize); }
-                process.sleep(&pipe.write_cnt as *const Wrapping<_> as usize, pipe);
+                task.sleep(&pipe.write_cnt as *const Wrapping<_> as usize, pipe);
                 pipe = self.0.lock();
             } else {
                 let mut byte: u8 = 0;
-                if process.data.get_mut().copy_in(addr+(write_count as usize), &mut byte, 1).is_err() {
+                if task.data.get_mut().copy_in(addr+(write_count as usize), &mut byte, 1).is_err() {
                     break;                    
                 }
                 let i = (pipe.write_cnt.0 % PIPESIZE_U32) as usize;
@@ -217,21 +217,21 @@ impl Pipe {
         Ok(write_count)
     }
 
-    /// 关闭管道的一端，通知另一端的可能阻塞进程解除休眠。
+    /// 关闭管道的一端，通知另一端的可能阻塞进程（主线程）解除休眠。
     ///
     /// # 功能说明
     /// 根据参数决定关闭管道的读端或写端。该操作会修改管道内部状态，
-    /// 并唤醒另一端因等待数据或缓冲区而可能阻塞的进程，从而促使其继续执行或检测到关闭事件。
+    /// 并唤醒另一端因等待数据或缓冲区而可能阻塞的进程（主线程），从而促使其继续执行或检测到关闭事件。
     /// 这是管道资源回收流程的一部分，通常在文件关闭时调用。
     ///
     /// # 流程解释
     /// - 加锁访问 `PipeInner`；
     /// - 若关闭的是写端：
     ///   - 设置 `write_open = false`；
-    ///   - 唤醒所有阻塞在 `read_cnt` 上的读进程，以便它们在下一次尝试读取时感知写端关闭；
+    ///   - 唤醒所有阻塞在 `read_cnt` 上的读进程（主线程），以便它们在下一次尝试读取时感知写端关闭；
     /// - 若关闭的是读端：
     ///   - 设置 `read_open = false`；
-    ///   - 唤醒所有阻塞在 `write_cnt` 上的写进程，以便它们在下一次尝试写入时感知读端关闭。
+    ///   - 唤醒所有阻塞在 `write_cnt` 上的写进程（主线程），以便它们在下一次尝试写入时感知读端关闭。
     ///
     /// # 参数
     /// - `is_write`：布尔值，指示关闭的是否是写端；
@@ -301,7 +301,7 @@ impl Drop for Pipe {
 /// 该结构由外层的 [`SpinLock`] 保护，确保在并发读写或关闭时的数据一致性。
 ///
 /// 管道通过 `read_cnt` 和 `write_cnt` 实现环形缓冲区读写索引的推进，
-/// 并结合进程阻塞与唤醒机制，实现进程间的同步通信。
+/// 并结合进程（主线程）阻塞与唤醒机制，实现进程（主线程）间的同步通信。
 #[derive(Debug)]
 struct PipeInner {
     /// 管道的读端是否处于开启状态。

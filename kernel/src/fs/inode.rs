@@ -239,7 +239,7 @@ impl InodeCache {
     /// 多级目录递归遍历、目录合法性检查等，是路径到 inode 映射的核心实现。
     ///
     /// # 流程解释
-    /// 1. 根据路径首字符判断起始点是根目录还是当前进程的工作目录；
+    /// 1. 根据路径首字符判断起始点是根目录还是当前进程（主线程）的工作目录；
     /// 2. 利用 `skip_path` 解析每一级路径名并写入 `name`；
     /// 3. 每步使用 inode 的 `lock` 获取数据，确保类型为目录；
     /// 4. 若正在查找父目录且到达路径末尾，则返回当前目录；
@@ -261,7 +261,7 @@ impl InodeCache {
     /// - 若查找父目录但路径为根目录，则无法返回其父，打印警告并返回 `None`；
     ///
     /// # 安全性
-    /// - 读取当前工作目录使用 `unsafe { CPU_MANAGER.my_proc() }`，调用者需确保当前进程存在；
+    /// - 读取当前工作目录使用 `unsafe { CPU_MANAGER.my_proc() }`，调用者需确保当前进程（主线程）存在；
     /// - 整个遍历过程持有 inode 的 `SleepLock` 保护目录项读取；
     /// - 返回的 inode 持有引用计数，需通过 Drop 自动管理其释放；
     fn namex(&self, path: &[u8], name: &mut [u8; MAX_DIR_SIZE], is_parent: bool) -> Option<Inode> {
@@ -269,8 +269,8 @@ impl InodeCache {
         if path[0] == b'/' {
             inode = self.get(ROOTDEV, ROOTINUM);
         } else {
-            let process = unsafe { CPU_MANAGER.my_task() };
-            inode = self.dup(process.data.get_mut().cwd.as_ref().unwrap());
+            let task = unsafe { CPU_MANAGER.my_task() };
+            inode = self.dup(task.data.get_mut().cwd.as_ref().unwrap());
         }
 
         let mut cur: usize = 0;
@@ -382,7 +382,7 @@ impl InodeCache {
     /// - 若 `inode_alloc` 返回失败（磁盘 inode 已满），将导致 panic（未显式处理）；
     ///
     /// # 安全性
-    /// - 使用了对当前进程 `cwd` 的 unsafe 引用，但在路径解析中已有安全校验；
+    /// - 使用了对当前进程（主线程） `cwd` 的 unsafe 引用，但在路径解析中已有安全校验；
     /// - 所有 inode 操作受 `SleepLock` 保护，确保并发安全；
     /// - 目录项链接写入时，日志系统应已开启（需外部保证处于 `begin_op` 事务中）以避免一致性问题；
     pub fn create(&self, path: &[u8], itype: InodeType, major: u16, minor: u16, reuse: bool) -> Option<Inode> {

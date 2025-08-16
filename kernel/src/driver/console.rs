@@ -25,11 +25,11 @@ pub(super) fn read(mut dst: Address, tot: u32) -> Result<u32, ()> {
         // if no available data in console buf
         // wait until the console device write some data
         while console.ri == console.wi {
-            let process = unsafe { CPU_MANAGER.my_task() };
-            if process.killed.load(Ordering::Relaxed) {
+            let task = unsafe { CPU_MANAGER.my_task() };
+            if task.killed.load(Ordering::Relaxed) {
                 return Err(())
             }
-            process.sleep(&console.ri as *const Wrapping<_> as usize, console);
+            task.sleep(&console.ri as *const Wrapping<_> as usize, console);
             console = CONSOLE.lock();
         }
 
@@ -100,7 +100,7 @@ pub(super) fn intr(c: u8) {
 
     match c {
         CTRL_PRINT_PROCESS => {
-            todo!("print process list to debug")
+            todo!("print task list to debug")
         },
         CTRL_BS_LINE => {
             while console.ei != console.wi &&

@@ -12,25 +12,25 @@ use crate::fs::{ICACHE, Inode, LOG, InodeData};
 use super::Task;
 
 /// 功能说明
-/// 该函数用于将指定路径（path）对应的 ELF 可执行文件加载到进程（Proc）的用户空间中，
-/// 并将传入的命令行参数（argv）准备好放入用户栈，最终完成进程的内存映射、栈初始化及入口点设置。
+/// 该函数用于将指定路径（path）对应的 ELF 可执行文件加载到进程（主线程）（Proc）的用户空间中，
+/// 并将传入的命令行参数（argv）准备好放入用户栈，最终完成进程（主线程）的内存映射、栈初始化及入口点设置。
 ///
 /// 流程解释
 /// 1. 根据给定路径查找并获取对应的文件 inode。
 /// 2. 读取 ELF 文件头，校验 ELF 魔数是否合法。
-/// 3. 为进程分配新的页表（PageTable），尚未替换进程当前页表。
+/// 3. 为进程（主线程）分配新的页表（PageTable），尚未替换进程（主线程）当前页表。
 /// 4. 依次读取 ELF 程序头表的每个段信息，
 ///    - 验证程序段的合法性（大小、地址对齐等）
 ///    - 为程序段分配用户虚拟内存空间
 ///    - 加载程序段数据到相应虚拟地址
 /// 5. 在程序段末尾分配两页用户栈空间（一页作为栈，另一页作为栈保护页）。
 /// 6. 将传入的命令行参数逐个拷贝进用户栈，构造用户栈上的 argv 数组。
-/// 7. 更新进程数据结构中的页表、地址空间大小、程序入口点（epc）和栈指针（sp）。
+/// 7. 更新进程（主线程）数据结构中的页表、地址空间大小、程序入口点（epc）和栈指针（sp）。
 /// 8. 释放旧的页表对应资源，返回命令行参数数量。
 ///
 /// 参数
 /// - `p: &mut Proc`
-///   目标进程的可变引用，用于加载可执行文件及更新进程状态。
+///   目标进程（主线程）的可变引用，用于加载可执行文件及更新进程（主线程）状态。
 /// - `path: &[u8]`
 ///   ELF 文件路径的字节切片表示，需满足文件系统格式。
 /// - `argv: &[Option<Box<[u8; MAXARGLEN]>>]`
@@ -61,7 +61,7 @@ use super::Task;
 ///   调用时必须保证输入路径和 ELF 文件的完整正确性，否则可能引发未定义行为。
 /// - 新页表替换旧页表时保证旧资源释放，避免内存泄漏或悬挂指针。
 /// - 不允许中断或异步信号干扰该过程，确保加载一致性。
-pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
+pub fn load(task: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>>]) -> Result<usize, &'static str> {
     // get relevant inode using path
     let inode: Inode;
     LOG.begin_op();
@@ -91,9 +91,9 @@ pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>
         return Err("bad elf magic number")
     }
 
-    let tid = process.excl.lock().tid;
+    let tid = task.excl.lock().tid;
     // allocate new pagetable, not assign to proc yet
-    let tdata = process.data.get_mut();
+    let tdata = task.data.get_mut();
     let pgt;
     match PageTable::alloc_proc_pagetable(tdata.trapframe as usize, tid) {
         Some(res) => pgt = res,
@@ -257,7 +257,7 @@ pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>
 }
 
 /// 功能说明
-/// 将 ELF 程序段的数据加载到指定进程的用户虚拟内存中。
+/// 将 ELF 程序段的数据加载到指定进程（主线程）的用户虚拟内存中。
 /// 函数会根据给定的虚拟地址 `va` 和文件偏移 `offset`，
 /// 将文件中 `size` 字节的数据读入用户空间对应的物理页面。
 /// 该函数假设虚拟地址已经按页大小对齐，且对应的虚拟内存页已经被映射。
@@ -274,7 +274,7 @@ pub fn load(process: &mut Task, path: &[u8], argv: &[Option<Box<[u8; MAXARGLEN]>
 ///
 /// 参数
 /// - `pgt: &mut PageTable`
-///   目标进程的页表引用，用于虚拟地址到物理地址的转换。
+///   目标进程（主线程）的页表引用，用于虚拟地址到物理地址的转换。
 /// - `va: usize`
 ///   程序段加载的起始虚拟地址，要求页对齐。
 /// - `idata: &mut SleepLockGuard<'_, InodeData>`
@@ -335,7 +335,7 @@ fn align_sp(sp: usize) -> usize {
 
 /// ELF 文件头结构体，表示 ELF 可执行文件的起始元信息。
 /// 用于解析 ELF 文件格式，获取程序入口、段表偏移、节表偏移等关键数据，
-/// 是加载 ELF 文件到进程地址空间的基础数据结构。
+/// 是加载 ELF 文件到进程（主线程）地址空间的基础数据结构。
 #[repr(C)]
 struct ElfHeader {
     /// ELF 魔数，用于标识该文件是否为有效 ELF 文件，固定值 0x464C457F。
@@ -372,7 +372,7 @@ struct ElfHeader {
 
 
 /// ELF 程序头结构体，描述 ELF 文件中的单个程序段信息。
-/// 用于在加载 ELF 可执行文件时，指示操作系统如何映射该段到进程的虚拟内存空间。
+/// 用于在加载 ELF 可执行文件时，指示操作系统如何映射该段到进程（主线程）的虚拟内存空间。
 /// 包含程序段的类型、访问权限、文件偏移、内存地址、大小和对齐要求等关键信息。
 #[repr(C)]
 struct ProgHeader {
@@ -382,7 +382,7 @@ struct ProgHeader {
     flags: u32,
     /// 程序段在文件中的偏移量。
     off: u64,
-    /// 程序段映射到进程虚拟内存的起始地址。
+    /// 程序段映射到进程（主线程）虚拟内存的起始地址。
     vaddr: u64,
     /// 物理地址（通常未使用，现代系统多忽略）。
     paddr: u64,

@@ -85,8 +85,8 @@ impl SpinLock<Uart> {
 
         loop {
             if uart.wi == uart.ri + Wrapping(UART_BUF) {
-                let process = unsafe { CPU_MANAGER.my_task() };
-                process.sleep(&uart.ri as *const Wrapping<_> as usize, uart);
+                let task = unsafe { CPU_MANAGER.my_task() };
+                task.sleep(&uart.ri as *const Wrapping<_> as usize, uart);
                 uart = self.lock();
             } else {
                 let wi = uart.wi.0 % UART_BUF;

@@ -4,23 +4,23 @@ use super::Task;
 
 use lazy_static::lazy_static;
 
-pub struct ProcessFIFO {
+pub struct TaskFIFO {
     current: Option<*const Task>,
     ready_queue: VecDeque<*const Task>,
 }
 
-unsafe impl Sync for ProcessFIFO {}
-unsafe impl Send for ProcessFIFO {}
+unsafe impl Sync for TaskFIFO {}
+unsafe impl Send for TaskFIFO {}
 /// A simple FIFO scheduler.
-impl ProcessFIFO {
+impl TaskFIFO {
     pub const fn new() -> Self {
         Self {
             current: None,
             ready_queue: VecDeque::new(),
         }
     }
-    pub fn add(&mut self, process: *const Task) {
-        self.ready_queue.push_back(process);
+    pub fn add(&mut self, task: *const Task) {
+        self.ready_queue.push_back(task);
     }
     pub fn fetch(&mut self) -> Option<*const Task> {
         self.ready_queue.pop_front()

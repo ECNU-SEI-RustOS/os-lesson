@@ -1,5 +1,4 @@
-use crate::{process::{Task, CPU_MANAGER}, spinlock::SpinLock};
-use crate::process::PROC_MANAGER;
+use crate::{process::{Task}, spinlock::SpinLock};
 use alloc::collections::VecDeque;
 
 pub struct Semaphore {
