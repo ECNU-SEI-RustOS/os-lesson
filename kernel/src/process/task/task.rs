@@ -38,7 +38,6 @@ impl KernelStack {
 pub unsafe fn kstack_alloc(tid: usize) -> KernelStack {
     let (kstack_bottom, kstack_top) = kernel_stack_position_by_tid(tid);
     let pa = RawQuadPage::new_zeroed() as usize;
-    kerror!("map kstack {:?} in kernel space",VirtAddr::try_from(kstack_bottom).unwrap());
     
     kvm_task_kstack_map(
         VirtAddr::try_from(kstack_bottom).unwrap(),
@@ -136,8 +135,8 @@ impl Task {
         let proc = unsafe { process.unwrap().as_mut().unwrap() };
         let procdata = proc.data.get_mut();
         let trapframe_pa = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize};
-        kinfo!("set trapframe map {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),procdata.pagetable.as_mut().unwrap().as_satp());
-        match procdata.pagetable.as_mut().unwrap()
+        kinfo!("set trapframe map {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),unsafe { procdata.pagetable.unwrap().as_mut().unwrap().as_satp() });
+        match unsafe { procdata.pagetable.unwrap().as_mut().unwrap() }
                     .map_pages(
                         VirtAddr::from(trapframe_from_tid(tid)),
                         PAGE_SIZE,
@@ -184,8 +183,8 @@ impl Task {
         let procdata = proc.data.get_mut();
         kinfo!("set trapframe");
         let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize};
-        kinfo!("map {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),procdata.pagetable.as_mut().unwrap().as_satp());
-        match procdata.pagetable.as_mut().unwrap()
+        kinfo!("map {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),unsafe { procdata.pagetable.unwrap().as_mut().unwrap().as_satp() });
+        match unsafe { procdata.pagetable.unwrap().as_mut().unwrap() }
                     .map_pages(
                         VirtAddr::from(trapframe_from_tid(tid)),
                         PAGE_SIZE,
@@ -239,9 +238,9 @@ impl Drop for Task {
         let tid = self.tid;
         let proc = unsafe { &mut *self.process.unwrap() };
         let procdata = proc.data.get_mut();
-        kinfo!("free trapframe unmap {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),procdata.pagetable.as_mut().unwrap().as_satp());
+        kinfo!("free trapframe unmap {:?} {:x}",VirtAddr::from(trapframe_from_tid(tid)),unsafe { procdata.pagetable.unwrap().as_mut().unwrap().as_satp() });
         
-        procdata.pagetable.as_mut().unwrap().uvm_unmap(trapframe_from_tid(tid).into(), 1, false);
+        unsafe { procdata.pagetable.unwrap().as_mut().unwrap().uvm_unmap(trapframe_from_tid(tid).into(), 1, false) };
         TID_ALLOCATOR.lock().tid_dealloc(tid);
         kinfo!("dealloc tid:{}", tid);
     }
