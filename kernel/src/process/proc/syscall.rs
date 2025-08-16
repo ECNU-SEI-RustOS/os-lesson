@@ -79,8 +79,22 @@ impl Syscall for Process {
 
         #[cfg(feature = "trace_syscall")]
         println!("[{}].exit(status={})", self.excl.lock().pid, exit_status);
-
-        unsafe { PROC_MANAGER.exiting(self.index, exit_status); }
+        if self.is_child_task {
+            unsafe { PROC_MANAGER.child_thread_exiting(self.index, exit_status); }
+        } else {
+            unsafe { 
+                loop{
+                    PROC_MANAGER.exiting(self.index, exit_status);
+                    //self.yielding();
+                    let mut parent_map = PROC_MANAGER.parents.lock();
+                        
+                    let channel = self as *const Process as usize;
+                    self.sleep(channel, parent_map);
+                    parent_map = PROC_MANAGER.parents.lock();
+                }; 
+            }
+        }
+        
         unreachable!("process exit");
     }
 
