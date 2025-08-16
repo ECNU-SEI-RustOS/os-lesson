@@ -22,16 +22,22 @@ use crate::process::{PROC_MANAGER, CPU_MANAGER};
 
 pub static DISK: SpinLock<Disk> = SpinLock::new(Disk::new(), "virtio_disk");
 
+/// VirtIO 磁盘设备内存布局
+///
+/// # 内存布局
+/// - 按页对齐要求设计
+/// - 描述符表、可用环、已用环分别位于不同页
+/// - 使用填充(pad)确保正确对齐
 #[repr(C, align(4096))]
 pub struct Disk {
-    // a page
+    // 第一页
     pad1: Pad,
     desc: [VQDesc; NUM],
     avail: VQAvail,
-    // another page
+    // 另一页
     pad2: Pad,
     used: VQUsed,
-    // end
+    // 结尾
     pad3: Pad,
     free: [bool; NUM],
     used_idx: u16,
@@ -40,6 +46,7 @@ pub struct Disk {
 }
 
 impl Disk {
+    /// 创建新的未初始化磁盘实例
     const fn new() -> Self {
         Self {
             pad1: Pad::new(),
@@ -55,8 +62,26 @@ impl Disk {
         }
     }
 
-    /// Init the Disk.
-    /// Only called once when the kernel boots.
+    /// 初始化磁盘设备
+    ///
+    /// # 功能说明
+    /// 执行 VirtIO 设备初始化流程：
+    /// 1. 验证设备标识
+    /// 2. 设备状态协商
+    /// 3. 功能位协商
+    /// 4. 配置队列
+    ///
+    /// # 安全性
+    /// - 仅在系统启动时调用一次
+    /// - 需要独占访问磁盘结构
+    ///
+    /// # 初始化步骤
+    /// 1. 设备识别与验证
+    /// 2. 设置 ACKNOWLEDGE 和 DRIVER 状态位
+    /// 3. 功能位协商
+    /// 4. 设置 FEATURES_OK 状态
+    /// 5. 设置 DRIVER_OK 状态
+    /// 6. 配置队列0
     pub unsafe fn init(&mut self) {
         debug_assert_eq!((&self.desc as *const _ as usize) % PGSIZE, 0);
         debug_assert_eq!((&self.used as *const _ as usize) % PGSIZE, 0);
@@ -70,14 +95,14 @@ impl Disk {
             panic!("could not find virtio disk");
         }
     
-        // step 1,2,3 - reset and set these two status bit
+        // 步骤 1、2、3 - 复位并设置这两个状态位
         let mut status: u32 = 0;
         status |= VIRTIO_CONFIG_S_ACKNOWLEDGE;
         write(VIRTIO_MMIO_STATUS, status);
         status |= VIRTIO_CONFIG_S_DRIVER;
         write(VIRTIO_MMIO_STATUS, status);
     
-        // step 4 - read feature bits and negotiate
+        // 步骤 4 - 读取特征位并进行协商
         let mut features: u32 = read(VIRTIO_MMIO_DEVICE_FEATURES);
         features &= !(1u32 << VIRTIO_BLK_F_RO);
         features &= !(1u32 << VIRTIO_BLK_F_SCSI);
@@ -88,20 +113,20 @@ impl Disk {
         features &= !(1u32 << VIRTIO_RING_F_INDIRECT_DESC);
         write(VIRTIO_MMIO_DRIVER_FEATURES, features);
     
-        // step 5
-        // set FEATURES_OK bit to tell the device feature negotiation is complete
+        // 步骤 5
+        // 设置 FEATURES_OK 位以告知设备特征协商已完成
         status |= VIRTIO_CONFIG_S_FEATURES_OK;
         write(VIRTIO_MMIO_STATUS, status);
     
-        // step 8
-        // set DRIVER_OK bit to tell device that driver is ready
-        // at this point device is "live"
+        // 步骤 6
+        // 设置 DRIVER_OK 位以告知设备驱动程序已准备就绪
+        // 此时设备处于 “活动” 状态
         status |= VIRTIO_CONFIG_S_DRIVER_OK;
         write(VIRTIO_MMIO_STATUS, status);
     
         write(VIRTIO_MMIO_GUEST_PAGE_SIZE, PGSIZE as u32);
     
-        // initialize queue 0
+        // 初始化队列 0
         write(VIRTIO_MMIO_QUEUE_SEL, 0);
         let max = read(VIRTIO_MMIO_QUEUE_NUM_MAX);
         if max == 0 {
@@ -114,11 +139,21 @@ impl Disk {
         let pfn: usize = (self as *const Disk as usize) >> PGSHIFT;
         write(VIRTIO_MMIO_QUEUE_PFN, u32::try_from(pfn).unwrap());
 
-        // set the descriptors free
+        // 释放描述符
         self.free.iter_mut().for_each(|f| *f = true);
     }
 
-    /// Allocate three descriptors.
+    /// 分配三个连续描述符
+    ///
+    /// # 参数
+    /// - `idx`: 输出参数，存储分配的描述符索引
+    ///
+    /// # 返回值
+    /// - `true`: 分配成功
+    /// - `false`: 分配失败（资源不足）
+    ///
+    /// # 注意
+    /// 失败时会自动释放已分配的描述符
     fn alloc3_desc(&mut self, idx: &mut [usize; 3]) -> bool {
         for i in 0..idx.len() {
             match self.alloc_desc() {
@@ -134,7 +169,11 @@ impl Disk {
         true
     }
 
-    /// Allocate one descriptor.
+    /// 分配单个描述符
+    ///
+    /// # 返回值
+    /// - `Some(usize)`: 分配的描述符索引
+    /// - `None`: 无可用描述符
     fn alloc_desc(&mut self) -> Option<usize> {
         debug_assert_eq!(self.free.len(), NUM);
         for i in 0..NUM {
@@ -146,7 +185,14 @@ impl Disk {
         None
     }
 
-    /// Mark a descriptor as free.
+    /// 释放单个描述符
+    ///
+    /// # 参数
+    /// - `i`: 要释放的描述符索引
+    ///
+    /// # Panics
+    /// - 索引超出范围
+    /// - 描述符已处于空闲状态
     fn free_desc(&mut self, i: usize) {
         if i >= NUM || self.free[i] {
             panic!("desc index not correct");
@@ -161,7 +207,13 @@ impl Disk {
         }
     }
 
-    /// Free a chain of descriptors.
+    /// 释放描述符链
+    ///
+    /// # 功能说明
+    /// 遍历并释放通过`VRING_DESC_F_NEXT`链接的描述符链
+    ///
+    /// # 参数
+    /// - `i`: 链的起始描述符索引
     fn free_chain(&mut self, mut i: usize) {
         loop {
             let flag = self.desc[i].flags;
@@ -175,8 +227,15 @@ impl Disk {
         }
     }
 
-    /// Called by the trap/interrupt handler in the kernel 
-    /// when the disk sends an interrupt.
+    /// 磁盘中断处理函数
+    ///
+    /// # 功能说明
+    /// 1. 确认并清除中断状态
+    /// 2. 处理已用环中的完成项
+    /// 3. 唤醒等待缓冲区操作的进程
+    ///
+    /// # 调用时机
+    /// 由内核陷阱/中断处理器在磁盘发出中断时调用
     pub fn intr(&mut self) {
         unsafe {
             let intr_stat = read(VIRTIO_MMIO_INTERRUPT_STATUS);
@@ -185,8 +244,7 @@ impl Disk {
 
         fence(Ordering::SeqCst);
 
-        // the device increments disk.used->idx when it
-        // adds an entry to the used ring.
+        // 当设备向 used ring 添加一个条目时，它会增加 disk.used->idx 的值
         while self.used_idx != self.used.idx {
             fence(Ordering::SeqCst);
             let id = self.used.ring[self.used_idx as usize % NUM].id as usize;
@@ -205,8 +263,23 @@ impl Disk {
     }
 }
 
+/// 为自旋锁保护的磁盘实例添加扩展方法
 impl SpinLock<Disk> {
-    /// Read or write a certain Buf, which is returned after the op is done. 
+    /// 执行磁盘读写操作
+    ///
+    /// # 功能说明
+    /// 1. 分配描述符链
+    /// 2. 设置请求描述符
+    /// 3. 提交到可用环
+    /// 4. 通知设备
+    /// 5. 等待操作完成
+    ///
+    /// # 参数
+    /// - `buf`: 要读写的缓冲区（可变引用）
+    /// - `writing`: 操作类型（true=写，false=读）
+    ///
+    /// # 处理流程
+    /// - 可能阻塞当前进程直到操作完成
     pub fn rw(&self, buf: &mut Buf<'_>, writing: bool) {
         let mut guard = self.lock();
         let buf_raw_data = buf.raw_data_mut();
@@ -223,8 +296,8 @@ impl SpinLock<Disk> {
             }
         }
 
-        // format descriptors
-        // QEMU's virtio block device read them
+        // 格式化描述符
+        // QEMU 的 virtio 块设备会读取它们
         let buf0 = &mut guard.ops[idx[0]];
         buf0.type_ = if writing { VIRTIO_BLK_T_OUT } else { VIRTIO_BLK_T_IN };
         buf0.reserved = 0;
@@ -247,8 +320,8 @@ impl SpinLock<Disk> {
         guard.desc[idx[2]].flags = VRING_DESC_F_WRITE;
         guard.desc[idx[2]].next = 0;
 
-        // record the buf
-        // retrieve it back when the disk finishes with the raw buf data
+        // 记录缓冲区
+        // 当磁盘处理完原始缓冲区数据后，将其取回
         guard.info[idx[0]].disk = true;
         guard.info[idx[0]].buf_channel = Some(buf_raw_data as usize);
 
@@ -265,9 +338,9 @@ impl SpinLock<Disk> {
 
         unsafe { write(VIRTIO_MMIO_QUEUE_NOTIFY, 0); }
 
-        // wait for the disk to handle the buf data
+        // 等待磁盘处理缓冲区数据
         while guard.info[idx[0]].disk {
-            // choose the raw buf data as channel
+            // 选择原始缓冲区数据作为通道
             unsafe { CPU_MANAGER.my_proc().sleep(buf_raw_data as usize, guard); }
             guard = self.lock();
         }
@@ -280,10 +353,12 @@ impl SpinLock<Disk> {
     }
 }
 
+/// 内存填充结构（用于对齐）
 #[repr(C, align(4096))]
 struct Pad();
 
 impl Pad {
+    /// 创建新的填充实例
     const fn new() -> Self {
         Self()
     }
@@ -298,6 +373,7 @@ struct VQDesc {
 }
 
 impl VQDesc {
+    /// 创建新的未初始化描述符
     const fn new() -> Self {
         Self {
             addr: 0,
@@ -317,6 +393,7 @@ struct VQAvail {
 }
 
 impl VQAvail {
+    /// 创建新的可用环
     const fn new() -> Self {
         Self {
             flags: 0,
@@ -335,6 +412,7 @@ struct VQUsed {
 }
 
 impl VQUsed {
+    /// 创建新的已用环
     const fn new() -> Self {
         Self {
             flags: 0,
@@ -351,6 +429,7 @@ struct VQUsedElem {
 }
 
 impl VQUsedElem {
+    /// 创建新的已用元素
     const fn new() -> Self {
         Self {
             id: 0,
@@ -361,15 +440,16 @@ impl VQUsedElem {
 
 #[repr(C)]
 struct Info {
-    /// Disk rw op stores the sleep channel in it.
-    /// Disk intr op retrieves it to wake up proc.
+    /// 磁盘读写操作会将睡眠通道存储在其中。
+    /// 磁盘中断操作会检索该通道以唤醒进程。
     buf_channel: Option<usize>,
     status: u8,
-    /// Is the relevant buf owned by disk?
+    /// 相关的缓冲区是否由磁盘拥有?
     disk: bool,
 }
 
 impl Info {
+    /// 创建新的元信息
     const fn new() -> Self {
         Self {
             buf_channel: None,
@@ -387,6 +467,7 @@ struct VirtIOBlkReq {
 }
 
 impl VirtIOBlkReq {
+    /// 创建新的请求
     const fn new() -> Self {
         Self {
             type_: 0,
@@ -396,8 +477,8 @@ impl VirtIOBlkReq {
     }
 }
 
-// virtio mmio control registers' offset
-// from qemu's virtio_mmio.h
+
+//virtio mmio 控制寄存器的偏移量，来自 qemu 的 virtio_mmio.h
 const VIRTIO_MMIO_MAGIC_VALUE: usize = 0x000;
 const VIRTIO_MMIO_VERSION: usize = 0x004;
 const VIRTIO_MMIO_DEVICE_ID: usize = 0x008;
@@ -416,14 +497,13 @@ const VIRTIO_MMIO_INTERRUPT_STATUS: usize = 0x060;
 const VIRTIO_MMIO_INTERRUPT_ACK: usize = 0x064;
 const VIRTIO_MMIO_STATUS: usize = 0x070;
 
-// virtio status register bits
-// from qemu's virtio_config.h
+////virtio 状态寄存器位，来自 qemu 的 virtio_config.h
 const VIRTIO_CONFIG_S_ACKNOWLEDGE: u32 = 1;
 const VIRTIO_CONFIG_S_DRIVER: u32 = 2;
 const VIRTIO_CONFIG_S_DRIVER_OK: u32 = 4;
 const VIRTIO_CONFIG_S_FEATURES_OK: u32 = 8;
 
-// device feature bits
+// 设备特征位
 const VIRTIO_BLK_F_RO: u8 = 5;
 const VIRTIO_BLK_F_SCSI: u8 = 7;
 const VIRTIO_BLK_F_CONFIG_WCE: u8 = 11;
@@ -432,16 +512,15 @@ const VIRTIO_F_ANY_LAYOUT: u8 = 27;
 const VIRTIO_RING_F_INDIRECT_DESC: u8 = 28;
 const VIRTIO_RING_F_EVENT_IDX: u8 = 29;
 
-// VRingDesc flags
-const VRING_DESC_F_NEXT: u16 = 1; // chained with another descriptor
-const VRING_DESC_F_WRITE: u16 = 2; // device writes (vs read)
+// 虚拟环描述符标志位
+const VRING_DESC_F_NEXT: u16 = 1; // 与另一个描述符链接
+const VRING_DESC_F_WRITE: u16 = 2; // 设备写入（相对于读取）
 
-// for disk ops
-const VIRTIO_BLK_T_IN: u32 = 0; // read the disk
-const VIRTIO_BLK_T_OUT: u32 = 1; // write the disk
+// 用于磁盘操作
+const VIRTIO_BLK_T_IN: u32 = 0; // 读磁盘
+const VIRTIO_BLK_T_OUT: u32 = 1; // 写磁盘
 
-// this many virtio descriptors
-// must be a power of 2
+//这么多 virtio 描述符必须是 2 的幂
 const NUM: usize = 8;
 
 #[inline]
