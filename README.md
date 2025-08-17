@@ -22,9 +22,9 @@
 
 ## 提交内容
 
-- **项目说明文档：** 中期文档 - 基于Rust与xv6的操作系统教学方案设计与实现.pdf
-- **项目汇报PPT：** 中期PPT - 基于Rust与xv6的操作系统教学方案设计与实现.pptx
-- **项目演示视频：** [中期视频](https://pan.baidu.com/s/1hMQOC2ZkRO4_yzTtTfr8pg?pwd=9eek)
+- **项目说明文档：** 决赛文档 - 基于Rust与xv6的操作系统教学方案设计与实现.pdf
+- **项目汇报PPT：** 决赛PPT - 基于Rust与xv6的操作系统教学方案设计与实现.pptx
+- **项目演示视频：** [决赛视频](https://pan.baidu.com/s/1hMQOC2ZkRO4_yzTtTfr8pg?pwd=9eek)
 
 ------
 
@@ -59,7 +59,7 @@
   - **lab-trap分支：** 包含学生实验9，10的评测脚本，参考实现等
   - **lab-lazyalloc分支：** 包含学生实验11的评测脚本，参考实现等
   - **lab-schedule分支：** 包含学生实验12的评测脚本，参考实现等
-  - **ych-dev分支：** 包含使用Rust语言实现的用户程序，用户线程库等
+  - **lab-thread分支：** 包含使用Rust语言实现的用户程序，用户线程库，内核线程库及其实验
   
 - 执行`make qemu`可以启动基于Rust语言的系统内核
 - 执行`make asm`可以输出系统内核汇编代码，用于调式
