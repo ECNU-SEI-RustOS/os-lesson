@@ -652,9 +652,10 @@ impl Task {
             25 => self.sys_thread_count(),
             26 => self.sys_thread_waittid(),
             27 => self.sys_gittid(),
-            28 => self.sys_semaphore_create(),
-            29 => self.sys_semaphore_up(),
-            30 => self.sys_semaphore_down(),
+            28 => self.sys_get_task_exitstatus(),
+            29 => self.sys_semaphore_create(),
+            30 => self.sys_semaphore_up(),
+            31 => self.sys_semaphore_down(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }

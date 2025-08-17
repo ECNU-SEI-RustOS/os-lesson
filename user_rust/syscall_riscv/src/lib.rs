@@ -44,9 +44,10 @@ const SYSCALL_THREAD_CREATE: usize = 24;
 const SYSCALL_THREAD_COUNT: usize = 25;
 const SYSCALL_THREAD_WAITTID: usize = 26;
 const SYSCALL_GETTID: usize = 27;
-const SYSCALL_SEMAPHORE_CREATE: usize = 28;
-const SYSCALL_SEMAPHORE_UP: usize = 29;
-const SYSCALL_SEMAPHORE_DOWN: usize = 30;
+const SYSCALL_GET_TASK_EXITSTATUS: usize = 28;
+const SYSCALL_SEMAPHORE_CREATE: usize = 29;
+const SYSCALL_SEMAPHORE_UP: usize = 30;
+const SYSCALL_SEMAPHORE_DOWN: usize = 31;
 
 pub fn sys_semaphore_create(count: usize) -> isize {
     syscall(SYSCALL_SEMAPHORE_CREATE, [count,0,0,0,0,0])
@@ -69,6 +70,9 @@ pub fn sys_thread_waittid(tid: usize) -> isize {
 
 pub fn sys_gettid() -> isize {
     syscall(SYSCALL_GETTID, [0, 0, 0, 0, 0, 0])
+}
+pub fn sys_get_task_exitstatus(tid: usize) -> isize {
+    syscall(SYSCALL_GET_TASK_EXITSTATUS, [tid, 0, 0, 0, 0, 0])
 }
 
 ///进程（主线程） A 调用 fork 系统调用之后，内核会创建一个新进程（主线程） B，这个进程（主线程） B 和调用 fork 的进程（主线程）A在它们分别返回用户态那一瞬间几乎处于相同的状态：这意味着它们包含的用户态的代码段、堆栈段及其他数据段的内容完全相同，但是它们是被放在两个独立的地址空间中的。因此新进程（主线程）的地址空间需要从原有进程（主线程）的地址空间完整拷贝一份。两个进程（主线程）通用寄存器也几乎完全相同。

@@ -48,6 +48,7 @@ pub trait Syscall {
     fn sys_thread_count(&mut self) -> SysResult;
     fn sys_thread_waittid(&mut self) -> SysResult;
     fn sys_gittid(&mut self) -> SysResult;
+    fn sys_get_task_exitstatus(&mut self) -> SysResult;
     fn sys_semaphore_create(&mut self) -> SysResult;
     fn sys_semaphore_up(&mut self) -> SysResult;
     fn sys_semaphore_down(&mut self) -> SysResult;
@@ -150,11 +151,26 @@ impl Syscall for Task {
             parent_map = unsafe { PROC_MANAGER.parents.lock() };
         }
 
-        Ok(child_task.excl.lock().exit_status as usize)
+        Ok(0)
     }
     fn sys_gittid(&mut self) -> SysResult {
         let tid = self.excl.lock().tid;
         Ok(tid)
+    }
+    fn sys_get_task_exitstatus(&mut self) -> SysResult {
+        let ctid = self.arg_raw(0);
+        let mut child_task = None;
+        for task in self.tasks.lock().iter(){
+            let ctask = unsafe { task.unwrap().as_ref().unwrap() };
+            if ctask.excl.lock().tid == ctid {
+                child_task = Some(task.unwrap());
+            }
+        }
+        if child_task.is_none() {
+            return Err(());
+        }
+        let child_task = unsafe { child_task.unwrap().as_mut().unwrap() };
+        Ok(child_task.excl.lock().exit_status as usize)
     }
     /// Redirect to [`Proc::fork`].
     ///

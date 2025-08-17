@@ -2,7 +2,7 @@
 #![no_main]
 
 use syscall_riscv::{sys_gettid, sys_thread_count, sys_thread_waittid};
-use user_rust_lib::{exit, kernel_thread::thread_create};
+use user_rust_lib::{exit, kernel_thread::{get_task_exitstatus, thread_create}};
 
 #[macro_use]
 extern crate user_rust_lib;
@@ -34,8 +34,8 @@ fn main(argc:usize, argv:&[&str]) -> i32 {
     println!("hello world by kernel thread {}", thread_create(f, 17));
     println!("hello world by kernel thread {}",tid2);
     let  mut a= 0;
-    let code = sys_thread_waittid(tid2 as usize);
-    println!("exit code:{}",code);
+    sys_thread_waittid(tid2 as usize);
+    println!("exit code:{}",get_task_exitstatus(tid2));
     for i in 0..10{
         println!("{}",unsafe { COUNTER });
         a += 1;
