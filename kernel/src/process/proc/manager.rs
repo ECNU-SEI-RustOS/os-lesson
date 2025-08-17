@@ -2,7 +2,6 @@ use alloc::collections::VecDeque;
 
 use super::Task;
 
-use lazy_static::lazy_static;
 
 pub struct TaskFIFO {
     current: Option<*const Task>,
