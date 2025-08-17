@@ -1,3 +1,5 @@
+//! 处理器状态管理，用于控制正在执行的进程与中断开关
+
 use array_macro::array;
 use alloc::sync::Arc;
 
@@ -44,23 +46,22 @@ impl CpuManager {
         }
     }
 
-    /// Must be called with interrupts disabled,
-    /// to prevent race with process being moved
-    /// to a different CPU.
+    /// 必须在禁用中断的情况下调用，
+    /// 以防止与进程被迁移到另一个 CPU 时出现竞争条件。
     #[inline]
     pub unsafe fn cpu_id() -> usize {
         tp::read()
     }
 
-    /// Return the reference this CPU's cpu struct.
-    /// Interrupts must be disabled.
+    /// 返回当前 CPU 的 cpu 结构体的引用。
+    /// 必须禁用中断。
     unsafe fn my_cpu(&self) -> &Cpu {
         let id = Self::cpu_id();
         &self.table[id]
     }
 
-    /// Return the mutable reference this CPU's cpu struct.
-    /// Interrupts must be disabled.
+    /// 返回当前 CPU 的 cpu 结构体的可变引用。
+    /// 必须禁用中断。
     pub unsafe fn my_cpu_mut(&mut self) -> &mut Cpu {
         let id = Self::cpu_id();
         &mut self.table[id]
@@ -161,10 +162,10 @@ impl CpuManager {
         let cpu: &mut Cpu = self.my_cpu_mut();
 
         loop {
-            // ensure devices can interrupt
+            //  确保设备能够中断
             sstatus::intr_on();
 
-            // use ProcManager to find a runnable process
+            // 使用 ProcManager 查找一个可运行的进程
             match {
                 let res = PROCFIFO.lock().fetch();
                 res
@@ -273,19 +274,19 @@ impl Cpu {
             fn switch(old: *mut Context, new: *mut Context);
         }
 
-        // interrupt is off
+        // 中断已关闭
         if !guard.holding() {
             panic!("sched(): not holding proc's lock");
         }
-        // only holding self.proc's lock
+        // 只持有 self.proc 的锁
         if self.noff != 1 {
             panic!("sched(): cpu hold multi locks");
         }
-        // proc is not running
+        // 进程不在运行中
         if guard.state == ProcState::RUNNING {
             panic!("sched(): proc is running");
         }
-        // should not be interruptible
+        // 不应被中断
         if sstatus::intr_get() {
             panic!("sched(): interruptible");
         }

@@ -1,10 +1,10 @@
-// Saved registers for kernel context switches.
+//! 用于保存切换上下文时使用的寄存器
 #[repr(C)]
 pub struct Context {
     ra: usize,
     sp: usize,
 
-    // callee-saved
+    // 被调用者保存的（寄存器）
     s0: usize,
     s1: usize,
     s2: usize,

@@ -1,3 +1,5 @@
+//! 内核主入口函数，完成多核系统中各hart的初始化流程。
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::driver::{virtio_disk::DISK, console};
@@ -53,24 +55,24 @@ pub unsafe fn rust_main() -> ! {
         println!();
         init_page_allocator();
         KERNEL_HEAP.kinit();
-        kvm_init(); // init kernel page table
-        PROC_MANAGER.proc_init(); // process table
-        kvm_init_hart(); // trun on paging
-        trap_init_hart(); // install kernel trap vector
+        kvm_init(); // 初始化内核页表
+        PROC_MANAGER.proc_init(); // 进程表
+        kvm_init_hart(); // 开启分页
+        trap_init_hart(); // 安装内核陷阱向量
         plic::init();
         plic::init_hart(cpuid);
-        BCACHE.binit();             // buffer cache
-        DISK.lock().init();         // emulated hard disk
-        PROC_MANAGER.user_init();   // first user process
+        BCACHE.binit();             // 缓冲区缓存
+        DISK.lock().init();         // 仿真硬盘
+        PROC_MANAGER.user_init();   //  第一个用户进程
 
         STARTED.store(true, Ordering::SeqCst);
     } else {
         while !STARTED.load(Ordering::SeqCst) {}
 
         println!("hart {} starting", cpuid);
-        kvm_init_hart(); // turn on paging
-        trap_init_hart(); // install kernel trap vector
-        plic::init_hart(cpuid); // ask PLIC for device interrupts
+        kvm_init_hart(); // 开启分页
+        trap_init_hart(); // 安装内核陷阱向量
+        plic::init_hart(cpuid); // 向 PLIC 请求设备中断
     }
 
     #[cfg(feature = "unit_test")]

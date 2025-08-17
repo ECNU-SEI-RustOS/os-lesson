@@ -1,3 +1,5 @@
+//! 文件系统模块
+
 use core::ops::DerefMut;
 
 mod file;
@@ -7,9 +9,9 @@ mod bio;
 mod block;
 mod superblock;
 
-// TODO - Buf also could?
+// TODO - Buf 也可以?
 pub use bio::Buf;
-// TODO - could be reduced to use xxx after removing usage from rmain.rs
+// TODO - 在从 rmain.rs 中移除用法后，可简化为使用 xxx
 pub use bio::BCACHE;
 pub use inode::{ICACHE, Inode, InodeData, InodeType, FileStat};
 pub use log::LOG;
@@ -20,10 +22,8 @@ use log::Log;
 use bio::BufData;
 use inode::icheck;
 
-/// Init fs.
-/// Read super block info.
-/// Init log info and recover if necessary.
-/// SAFETY: It must only be called once by the first user process's fork_ret.
+/// 初始化文件系统，读取磁盘超级块信息，并根据需要进行日志恢复
+/// 安全性：必须在系统启动时被调用一次
 pub unsafe fn init(dev: u32) {
     SUPER_BLOCK.init(dev);
     let log_ptr = LOG.lock().deref_mut() as *mut Log;

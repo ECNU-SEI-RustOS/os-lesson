@@ -1,3 +1,5 @@
+//! 管道操作
+
 use alloc::sync::Arc;
 use core::mem;
 use core::num::Wrapping;
@@ -61,7 +63,7 @@ impl Pipe {
     pub fn create() -> Option<(Arc<File>, Arc<File>)> {
         debug_assert!(mem::size_of::<Pipe>() <= 512-2*mem::size_of::<AtomicUsize>());
 
-        // create a pipe
+        //  创建一个管道
         let mut pipe = Arc::<Self>::try_new_zeroed().ok()?;
         let pipe = unsafe {
             let ptr = Arc::get_mut_unchecked(&mut pipe).as_mut_ptr();
@@ -73,7 +75,7 @@ impl Pipe {
         guard.write_open = true;
         drop(guard);
 
-        // create two files
+        // 创建两个文件
         let read_file = Arc::try_new(File {
             inner: FileInner::Pipe(Arc::clone(&pipe)),
             readable: true,
@@ -124,7 +126,7 @@ impl Pipe {
 
         let mut pipe = self.0.lock();
 
-        // wait for data to be written
+        // 等待数据被写入
         while pipe.read_cnt == pipe.write_cnt && pipe.write_open {
             if process.killed.load(Ordering::Relaxed) {
                 return Err(())
@@ -133,7 +135,7 @@ impl Pipe {
             pipe = self.0.lock();
         }
 
-        // read from pipe to user memory
+        // 从管道读取到用户内存
         let count = min(count, (pipe.write_cnt - pipe.read_cnt).0);
         let mut read_count = count;
         for i in 0..count {
@@ -197,7 +199,7 @@ impl Pipe {
             }
 
             if pipe.write_cnt == pipe.read_cnt + Wrapping(PIPESIZE_U32) {
-                // wait for data to be read
+                // 等待数据被读取
                 unsafe { PROC_MANAGER.wakeup(&pipe.read_cnt as *const Wrapping<_> as usize); }
                 process.sleep(&pipe.write_cnt as *const Wrapping<_> as usize, pipe);
                 pipe = self.0.lock();

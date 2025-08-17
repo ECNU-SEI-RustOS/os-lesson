@@ -1,4 +1,4 @@
-//! Log-relevant operations
+//! 日志层
 
 use core::{ops::{Deref, DerefMut}, panic, ptr};
 use core::mem;
@@ -291,7 +291,7 @@ impl Log {
         if !self.committing {
             panic!("log: committing while the committing flag is not set");
         }
-        // debug_assert!(self.lh.len > 0);     // it should have some log to commit
+        // debug_assert!(self.lh.len > 0);     // 它应该有一些日志可供提交
         if self.lh.len > 0 {
             self.write_log();
             self.write_head();
@@ -446,7 +446,7 @@ impl SpinLock<Log> {
             panic!("log: this log write is out of recording");
         }
 
-        // record the buf's blockno in the log header
+        // 在日志头部记录缓冲区的块编号
         for i in 0..guard.lh.len {
             if guard.lh.blocknos[i as usize] == buf.read_blockno() {
                 drop(guard);
@@ -509,7 +509,7 @@ impl SpinLock<Log> {
         let mut guard = self.lock();
         guard.outstanding -= 1;
         if guard.committing {
-            // it is not allowed to start a fs op while the log is commiting
+            // 当日志正在提交时，不允许启动文件系统操作。
             panic!("log: end fs op while the log is committing");
         }
         if guard.outstanding == 0 {
@@ -522,8 +522,8 @@ impl SpinLock<Log> {
         drop(guard);
 
         if !log_ptr.is_null() {
-            // SAFETY: Call commit without holding any lock.
-            //        And the committing flag protects the log op.
+            // 安全性：调用 commit 时不持有任何锁。
+            // 并且提交标志会保护日志操作。
             unsafe { log_ptr.as_mut().unwrap().commit(); }
             let mut guard = self.lock();
             guard.committing = false;
