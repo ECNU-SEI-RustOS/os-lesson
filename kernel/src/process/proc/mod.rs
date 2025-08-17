@@ -841,19 +841,25 @@ impl Task {
     }
 
     fn thread_create(&mut self, entry: usize, arg: usize) -> Result<usize, ()> {
-        let pos = self.tasks.lock().len() + 1;
+        // 将所有创建的线程挂在主线程下
+        let main_task = if self.is_child_task {
+            unsafe { self.parent.unwrap().as_mut().unwrap() }
+        } else {
+            self
+        };
+        let pos = main_task.tasks.lock().len() + 1;
         assert!(pos < MAX_TASKS_PER_PROC);
-        let t_ptr = self as *const Task;
-        let tdata = self.data.get_mut();
-        let child_task = unsafe { PROC_MANAGER.alloc_task(t_ptr).ok_or(())? };
+        let main_task_ptr = main_task as *const Task;
+        let main_task_data = main_task.data.get_mut();
+        let child_task = unsafe { PROC_MANAGER.alloc_task(main_task_ptr).ok_or(())? };
         child_task.is_child_task = true;
 
         let child_tid = child_task.excl.lock().tid;
-        child_task.parent = Some(t_ptr as *mut Task);
+        child_task.parent = Some(main_task_ptr as *mut Task);
 
         let cdata = unsafe { child_task.data.get().as_mut().unwrap() };
         // 分配子线程的trapframe
-        cdata.pagetable = tdata.pagetable.clone();
+        cdata.pagetable = main_task_data.pagetable.clone();
 
         let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize };
         match unsafe { cdata.pagetable.unwrap().as_mut().unwrap() }.map_pages(
@@ -869,15 +875,15 @@ impl Task {
         };
         cdata.trapframe = ctrapframe as _;
 
-        cdata.size = tdata.size;
+        cdata.size = main_task_data.size;
 
-        cdata.open_files.clone_from(&tdata.open_files);
-        cdata.cwd.clone_from(&tdata.cwd);
+        cdata.open_files.clone_from(&main_task_data.open_files);
+        cdata.cwd.clone_from(&main_task_data.cwd);
 
         // copy main thread name
-        cdata.name.copy_from_slice(&tdata.name);
+        cdata.name.copy_from_slice(&main_task_data.name);
 
-        debug_assert!(cdata.pagetable == tdata.pagetable);
+        debug_assert!(cdata.pagetable == main_task_data.pagetable);
         let mut cexcl = child_task.excl.lock();
         let child_tid = cexcl.tid;
         cexcl.state = TaskState::RUNNABLE;
@@ -895,7 +901,7 @@ impl Task {
         drop(cexcl);
         drop(cdata);
 
-        self.tasks.lock().push(Some(child_task as *mut Task));
+        main_task.tasks.lock().push(Some(child_task as *mut Task));
         TaskFifo.lock().add(child_task as *const Task);
 
         Ok(child_tid)
