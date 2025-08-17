@@ -35,38 +35,38 @@ pub mod manager;
 pub mod pid;
 mod syscall;
 
-/// 进程（主线程）状态枚举类型，表示操作系统内核中进程（主线程）的不同生命周期状态。
+/// 任务状态枚举类型，表示操作系统内核中任务的不同生命周期状态。
 ///
-/// 该枚举用于进程（主线程）调度与管理，反映进程（主线程）当前的执行或等待状态，
+/// 该枚举用于任务调度与管理，反映任务当前的执行或等待状态，
 /// 便于操作系统根据状态做出调度决策与资源回收处理。
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum ProcState {
-    /// 该进程（主线程）槽位未被占用，空闲状态。
+pub enum TaskState {
+    /// 任务槽位未被占用，空闲状态。
     UNUSED,
-    /// 进程（主线程）处于睡眠状态，等待某事件或资源唤醒。
+    /// 任务处于睡眠状态，等待某事件或资源唤醒。
     SLEEPING,
-    /// 进程（主线程）处于可运行状态，等待调度器调度执行。
+    /// 任务处于可运行状态，等待调度器调度执行。
     RUNNABLE,
-    /// 进程（主线程）当前正在 CPU 上运行。
+    /// 任务当前正在 CPU 上运行。
     RUNNING,
-    /// 进程（主线程）已被分配但尚未准备好运行。
+    /// 任务已被分配但尚未准备好运行。
     ALLOCATED,
-    /// 进程（主线程）已退出，处于僵尸状态，等待父进程（主线程）回收。
+    /// 任务已退出，处于僵尸状态，等待父任务（主线程）回收。
     ZOMBIE,
 }
 
-/// 进程（主线程）的排他信息结构体，包含进程（主线程）的核心状态和控制字段。
+/// 任务的排他信息结构体，包含任务的核心状态和控制字段。
 ///
-/// 该结构体保存进程（主线程）的调度状态、退出码、等待通道及进程（主线程）标识符等信息，
+/// 该结构体保存任务的调度状态、退出码、等待通道及进程（主线程）标识符等信息，
 /// 通常由进程（主线程）的排它锁保护，确保并发环境下的安全访问与修改。
 pub struct TaskExcl {
-    /// 进程（主线程）当前的状态，类型为 [`ProcState`]，反映进程（主线程）生命周期阶段。
-    pub state: ProcState,
-    /// 进程（主线程）退出时的状态码，用于父进程（主线程）获取子进程（主线程）退出信息。
+    /// 任务当前的状态，类型为 [`TaskState`]，反映任务生命周期阶段。
+    pub state: TaskState,
+    /// 任务退出时的状态码，用于父任务获取子任务退出信息。
     pub exit_status: i32,
-    /// 进程（主线程）等待的通道标识，用于睡眠和唤醒机制的同步。
+    /// 任务等待的通道标识，用于睡眠和唤醒机制的同步。
     pub channel: usize,
-    /// 进程（主线程）的唯一标识符（进程（主线程）ID）。
+    /// 任务的唯一标识符（进程ID）。
     pub pid: usize,
     /// 线程号
     pub tid: usize,
@@ -75,7 +75,7 @@ pub struct TaskExcl {
 impl TaskExcl {
     const fn new() -> Self {
         Self {
-            state: ProcState::UNUSED,
+            state: TaskState::UNUSED,
             exit_status: 0,
             channel: 0,
             pid: 0,
@@ -88,7 +88,7 @@ impl TaskExcl {
         self.pid = 0;
         self.channel = 0;
         self.exit_status = 0;
-        self.state = ProcState::UNUSED;
+        self.state = TaskState::UNUSED;
     }
 }
 
@@ -97,17 +97,17 @@ impl TaskExcl {
 /// 该结构体仅在当前进程（主线程）运行时访问，或在持有 [`ProcExcl`] 锁的其他进程（主线程）（例如 fork）
 /// 初始化时访问。包含内核栈指针、内存大小、上下文、打开的文件、用户页表等私有资源。
 pub struct TaskData {
-    /// 进程（主线程）内核栈的起始虚拟地址。
+    /// 任务内核栈的起始虚拟地址。
     kstack: usize,
-    ///  用户栈起始基地址。
+    /// 用户栈起始基地址。
     ustack_base: usize,
-    /// 进程（主线程）使用的内存大小（字节数）。
+    /// 进程使用的内存大小（字节数）。
     size: usize,
-    /// 进程（主线程）上下文（寄存器状态等），用于上下文切换。
+    /// 任务上下文（寄存器状态等），用于上下文切换。
     context: Context,
-    /// 进程（主线程）名称，最长16字节，通常用于调试和显示。
+    /// 进程名称，最长16字节，通常用于调试和显示。
     name: [u8; 16],
-    /// 进程（主线程）打开的文件数组，元素为可选的引用计数智能指针。
+    /// 进程打开的文件数组，元素为可选的引用计数智能指针。
     open_files: [Option<Arc<File>>; NFILE],
     /// 指向 TrapFrame 的裸指针，保存用户态寄存器临时值等信息。
     pub trapframe: *mut TrapFrame,
@@ -131,7 +131,7 @@ impl TaskData {
             cwd: None,
         }
     }
-    /// 获取进程（主线程）中的线程数量
+    /// 获取进程中的线程数量
     // pub fn thread_count(&self) -> usize {
     //     self.tasks.len()
     // }
@@ -148,19 +148,19 @@ impl TaskData {
         self.ustack_base
     }
     /// # 功能说明
-    /// 初始化进程（主线程）的上下文信息。该函数在进程（主线程）创建后调用，
-    /// 将进程（主线程）上下文清零，并设置返回地址为 `fork_ret`，
-    /// 以便进程（主线程）切换到用户态时从 `fork_ret` 函数开始执行。
+    /// 初始化任务的上下文信息。该函数在任务创建后调用，
+    /// 将任务上下文清零，并设置返回地址为 `fork_ret`，
+    /// 以便任务切换到用户态时从 `fork_ret` 函数开始执行。
     ///
     /// # 流程解释
     /// 1. 调用 `context.clear()` 清空当前上下文寄存器状态。
     /// 2. 设置上下文的返回地址寄存器（ra）为 `fork_ret` 函数的地址，
-    ///    确保进程（主线程）切换后执行 fork 返回逻辑。
+    ///    确保任务切换后执行 fork 返回逻辑。
     /// 3. 设置栈指针（sp）指向内核栈顶（`kstack + PGSIZE*4`），
     ///    以保证内核栈空间正确。
     ///
     /// # 参数
-    /// - `&mut self`：当前进程（主线程）的可变引用，用于修改其上下文和内核栈指针。
+    /// - `&mut self`：当前任务的可变引用，用于修改其上下文和内核栈指针。
     ///
     /// # 返回值
     /// - 无返回值。
@@ -176,11 +176,11 @@ impl TaskData {
     }
 
     /// # 功能说明
-    /// 准备进程（主线程）从内核态返回到用户态所需的 TrapFrame 和寄存器状态，
+    /// 准备任务从内核态返回到用户态所需的 TrapFrame 和寄存器状态，
     /// 并返回用户页表的 satp 寄存器值以切换地址空间。
     ///
     /// # 流程解释
-    /// 1. 获取当前进程（主线程）的 TrapFrame，可修改其中的内核态相关字段。
+    /// 1. 获取当前任务的 TrapFrame，可修改其中的内核态相关字段。
     /// 2. 读取当前内核页表的 satp 寄存器值，保存到 `tf.kernel_satp`，
     ///    用于内核态返回时恢复内核页表映射。
     /// 3. 设置内核栈指针 `tf.kernel_sp` 指向内核栈顶（`kstack + PGSIZE*4`）。
@@ -188,10 +188,10 @@ impl TaskData {
     /// 5. 设置当前 CPU 核心编号到 `tf.kernel_hartid`。
     /// 6. 将之前保存在 TrapFrame 的用户程序计数器 `epc` 写回 sepc 寄存器，
     ///    用于从陷阱返回后继续执行用户程序。
-    /// 7. 返回当前进程（主线程）的用户页表的 satp 寄存器值，供汇编代码切换页表。
+    /// 7. 返回当前任务的用户页表的 satp 寄存器值，供汇编代码切换页表。
     ///
     /// # 参数
-    /// - `&mut self`：当前进程（主线程）的可变引用，用于修改其 TrapFrame 和页表信息。
+    /// - `&mut self`：当前任务的可变引用，用于修改其 TrapFrame 和页表信息。
     ///
     /// # 返回值
     /// - 返回 `usize` 类型的用户页表的 satp 寄存器值，用于地址空间切换。
@@ -199,11 +199,11 @@ impl TaskData {
     /// # 可能的错误
     /// - 函数中使用了多处 `unwrap()` 和 `unsafe`，
     ///   若 `tf` 或 `pagetable` 未正确初始化，可能触发 panic 或未定义行为。
-    /// - 需保证当前线程确实持有对进程（主线程）数据的独占访问。
+    /// - 需保证当前线程确实持有对任务数据的独占访问。
     ///
     /// # 安全性
-    /// - 本函数包含 `unsafe` 代码块，假设 `tf` 指针有效且进程（主线程）页表已正确初始化。
-    /// - 调用者需确保在进程（主线程）调度上下文中调用此函数，避免数据竞争。
+    /// - 本函数包含 `unsafe` 代码块，假设 `tf` 指针有效且进程页表已正确初始化。
+    /// - 调用者需确保在任务调度上下文中调用此函数，避免数据竞争。
     /// - 返回的 satp 值需用于低级上下文切换汇编代码，确保切换正确执行。
     pub fn user_ret_prepare(&mut self) -> usize {
         let trapframe: &mut TrapFrame = unsafe { self.trapframe.as_mut().unwrap() };
@@ -218,23 +218,6 @@ impl TaskData {
 
         unsafe { self.pagetable.unwrap().as_mut().unwrap().as_satp() }
     }
-    // pub fn user_ret_prepare_task(&mut self) -> (usize, usize) {
-    //     let task = &self.tasks[0].as_ref().unwrap();
-    //     let trapframe: &mut TrapFrame = task.get_trap_frame();
-    //     trapframe.kernel_satp = satp::read();
-    //     // current kernel stack's content is cleaned
-    //     // after returning to the kernel space
-
-    //     trapframe.kernel_sp = task.get_kstack_bottom() + KERNEL_STACK_SIZE;
-    //     trapframe.kernel_trap = user_trap as usize;
-    //     trapframe.kernel_hartid = unsafe { CpuManager::cpu_id() };
-
-    //     // restore the user pc previously stored in sepc
-    //     sepc::write(trapframe.epc);
-
-    //     (self.pagetable.as_ref().unwrap().as_satp(), task.tid)
-    // }
-
     /// 简单检查用户传入的虚拟地址是否在合法范围内。
     fn check_user_addr(&self, user_addr: usize) -> Result<(), ()> {
         if user_addr > self.size {
@@ -696,8 +679,8 @@ impl Task {
     /// - 进程（主线程）状态和上下文的修改均在锁保护下进行，保证线程安全。
     pub fn yielding(&mut self) {
         let mut guard = self.excl.lock();
-        assert_eq!(guard.state, ProcState::RUNNING);
-        guard.state = ProcState::RUNNABLE;
+        assert_eq!(guard.state, TaskState::RUNNING);
+        guard.state = TaskState::RUNNABLE;
         TaskFifo.lock().add(self as *const Task);
         guard = unsafe {
             CPU_MANAGER
@@ -749,7 +732,7 @@ impl Task {
         drop(guard);
         // go to sleep
         excl_guard.channel = channel;
-        excl_guard.state = ProcState::SLEEPING;
+        excl_guard.state = TaskState::SLEEPING;
 
         unsafe {
             let c = CPU_MANAGER.my_cpu_mut();
@@ -849,7 +832,7 @@ impl Task {
         }
 
         let mut cexcl = child.excl.lock();
-        cexcl.state = ProcState::RUNNABLE;
+        cexcl.state = TaskState::RUNNABLE;
         drop(cexcl);
 
         TaskFifo.lock().add(child as *const Task);
@@ -897,7 +880,7 @@ impl Task {
         debug_assert!(cdata.pagetable == tdata.pagetable);
         let mut cexcl = child_task.excl.lock();
         let child_tid = cexcl.tid;
-        cexcl.state = ProcState::RUNNABLE;
+        cexcl.state = TaskState::RUNNABLE;
 
         // 准备ustack
         let ustack_base = cdata.ustack_base;

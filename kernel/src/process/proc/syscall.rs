@@ -9,7 +9,7 @@ use core::fmt::Display;
 use core::mem;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
-use crate::process::proc::ProcState;
+use crate::process::proc::TaskState;
 use crate::process::sync::sem::{self, Semaphore};
 use crate::process::{PROC_MANAGER};
 use crate::fs::{ICACHE, Inode, InodeType, LOG, File, Pipe, FileStat};
@@ -141,7 +141,7 @@ impl Syscall for Task {
         }
         let child_task = unsafe { child_task.unwrap().as_mut().unwrap() };
         loop {
-            if child_task.excl.lock().state == ProcState::ZOMBIE {
+            if child_task.excl.lock().state == TaskState::ZOMBIE {
                 break;
             }
             let mut parent_map = unsafe { PROC_MANAGER.parents.lock() };

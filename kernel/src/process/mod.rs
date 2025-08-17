@@ -31,7 +31,7 @@ pub mod task;
 pub mod trapframe;
 
 use context::Context;
-use proc::ProcState;
+use proc::TaskState;
 use trapframe::TrapFrame;
 
 /// 全局进程（主线程）管理器（Process Manager）
@@ -207,7 +207,7 @@ impl TaskManager {
         for task in self.table.iter_mut() {
             let mut guard = task.excl.lock();
             match guard.state {
-                ProcState::UNUSED => {
+                TaskState::UNUSED => {
                     // holding the task's excl lock,
                     // so manager can modify its private data
                     let tdata = task.data.get_mut();
@@ -231,7 +231,7 @@ impl TaskManager {
                     tdata.init_context();
                     guard.pid = new_pid;
                     guard.tid = new_tid;
-                    guard.state = ProcState::ALLOCATED;
+                    guard.state = TaskState::ALLOCATED;
 
                     drop(guard);
                     return Some(task);
@@ -246,7 +246,7 @@ impl TaskManager {
         for task in self.table.iter_mut() {
             let mut guard = task.excl.lock();
             match guard.state {
-                ProcState::UNUSED => {
+                TaskState::UNUSED => {
                     task.is_child_task = true;
                     // holding the process's excl lock,
                     // so manager can modify its private data
@@ -262,7 +262,7 @@ impl TaskManager {
                     guard.pid = unsafe { parent.as_ref().unwrap().excl.lock().pid };
                     guard.tid = new_tid;
 
-                    guard.state = ProcState::ALLOCATED;
+                    guard.state = TaskState::ALLOCATED;
 
                     drop(guard);
                     return Some(task);
@@ -302,8 +302,8 @@ impl TaskManager {
         for task in self.table.iter_mut() {
             let mut guard = task.excl.lock();
             match guard.state {
-                ProcState::RUNNABLE => {
-                    guard.state = ProcState::ALLOCATED;
+                TaskState::RUNNABLE => {
+                    guard.state = TaskState::ALLOCATED;
                     drop(guard);
                     return Some(task);
                 }
@@ -348,7 +348,7 @@ impl TaskManager {
         let task = self.alloc_proc().expect("all process should be unused");
         task.user_init();
         let mut guard = task.excl.lock();
-        guard.state = ProcState::RUNNABLE;
+        guard.state = TaskState::RUNNABLE;
         TaskFifo.lock().add(task as *const Task);
     }
 
@@ -388,8 +388,8 @@ impl TaskManager {
     pub fn wakeup(&self, channel: usize) {
         for task in self.table.iter() {
             let mut guard = task.excl.lock();
-            if guard.state == ProcState::SLEEPING && guard.channel == channel {
-                guard.state = ProcState::RUNNABLE;
+            if guard.state == TaskState::SLEEPING && guard.channel == channel {
+                guard.state = TaskState::RUNNABLE;
                 TaskFifo.lock().add(task as *const Task);
             }
             drop(guard);
@@ -399,8 +399,8 @@ impl TaskManager {
     pub fn task_wakeup(&self, parent: *mut Task) {
         let parent = unsafe { parent.as_mut().unwrap() };
         let mut guard = parent.excl.lock();
-        if guard.state == ProcState::SLEEPING {
-            guard.state = ProcState::RUNNABLE;
+        if guard.state == TaskState::SLEEPING {
+            guard.state = TaskState::RUNNABLE;
             TaskFifo.lock().add(parent as *const Task);
         }
         drop(guard);
@@ -488,7 +488,7 @@ impl TaskManager {
                     let task = unsafe { task.as_mut().unwrap() };
 
                     let state = task.excl.lock().state;
-                    if state != ProcState::ZOMBIE {
+                    if state != TaskState::ZOMBIE {
                         is_over = false;
                         break;
                     }
@@ -550,7 +550,7 @@ impl TaskManager {
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
 
-        exit_pexcl.state = ProcState::ZOMBIE;
+        exit_pexcl.state = TaskState::ZOMBIE;
         let exit_tdata = self.table[exit_index].data.get();
 
         PID_ALLOCATOR.lock().pid_dealloc(pid);
@@ -582,7 +582,7 @@ impl TaskManager {
         TID_ALLOCATOR.lock().tid_dealloc(tid);
         let mut exit_pexcl = self.table[exit_index].excl.lock();
         exit_pexcl.exit_status = exit_status;
-        exit_pexcl.state = ProcState::ZOMBIE;
+        exit_pexcl.state = TaskState::ZOMBIE;
         drop(exit_pexcl);
         self.task_wakeup(parent as *mut Task);
         unsafe {
@@ -646,7 +646,7 @@ impl TaskManager {
 
                 let mut child_excl = self.table[i].excl.lock();
                 have_child = true;
-                if child_excl.state != ProcState::ZOMBIE {
+                if child_excl.state != TaskState::ZOMBIE {
                     continue;
                 }
                 let child_pid = child_excl.pid;
@@ -705,7 +705,7 @@ impl TaskManager {
         loop {
             let mut child_excl = self.table[child_index].excl.lock();
 
-            if child_excl.state != ProcState::ZOMBIE {
+            if child_excl.state != TaskState::ZOMBIE {
                 // have children, but none of them exit
                 drop(child_excl);
                 let channel = task as *const Task as usize;
@@ -772,8 +772,8 @@ impl TaskManager {
             let mut guard = self.table[i].excl.lock();
             if guard.pid == pid {
                 self.table[i].killed.store(true, Ordering::Relaxed);
-                if guard.state == ProcState::SLEEPING {
-                    guard.state = ProcState::RUNNABLE;
+                if guard.state == TaskState::SLEEPING {
+                    guard.state = TaskState::RUNNABLE;
                 }
                 return Ok(());
             }

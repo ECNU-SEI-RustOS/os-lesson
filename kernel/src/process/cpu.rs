@@ -2,7 +2,7 @@ use alloc::task;
 use array_macro::array;
 use alloc::sync::Arc;
 
-use super::{proc::TaskExcl, Context, ProcState, Task, PROC_MANAGER};
+use super::{proc::TaskExcl, Context, TaskState, Task, PROC_MANAGER};
 use crate::consts::NCPU;
 use crate::process::TaskFifo;
 use crate::register::{sstatus, tp};
@@ -160,7 +160,7 @@ impl CpuManager {
                     cpu.task = Some(task);
                     let task = unsafe { task.as_mut().unwrap() };
                     let mut guard = task.excl.lock();
-                    guard.state = ProcState::RUNNING;
+                    guard.state = TaskState::RUNNING;
                     let old_context = &mut cpu.scheduler as *mut Context;
                     let new_context = task.data.get_mut().get_context();
 
@@ -265,7 +265,7 @@ impl Cpu {
             panic!("sched(): cpu hold multi locks");
         }
         // proc is not running
-        if guard.state == ProcState::RUNNING {
+        if guard.state == TaskState::RUNNING {
             panic!("sched(): proc is running");
         }
         // should not be interruptible
@@ -312,7 +312,7 @@ impl Cpu {
                 task = &mut *self.task.unwrap();
                 task.excl.lock()
             };
-            if guard.state == ProcState::RUNNING {
+            if guard.state == TaskState::RUNNING {
                 drop(guard);
                 unsafe {
                     let task = &mut *self.task.unwrap();
