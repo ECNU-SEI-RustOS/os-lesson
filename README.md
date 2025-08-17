@@ -23,7 +23,7 @@
 ## 提交内容
 
 - **项目说明文档：** 决赛文档 - 基于Rust与xv6的操作系统教学方案设计与实现.pdf
-- **项目汇报PPT：** 决赛PPT - 基于Rust与xv6的操作系统教学方案设计与实现.pptx
+- **项目汇报PPT：** 决赛PPT - 基于Rust与xv6的操作系统教学方案设计与实现.pdf
 - **项目演示视频：** [决赛视频](https://pan.baidu.com/s/1hMQOC2ZkRO4_yzTtTfr8pg?pwd=9eek)
 
 ------
