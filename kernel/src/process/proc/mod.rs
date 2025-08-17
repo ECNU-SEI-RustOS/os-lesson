@@ -851,6 +851,7 @@ impl Task {
         assert!(pos < MAX_TASKS_PER_PROC);
         let main_task_ptr = main_task as *const Task;
         let main_task_data = main_task.data.get_mut();
+        // 准备任务结构体和Context
         let child_task = unsafe { PROC_MANAGER.alloc_task(main_task_ptr).ok_or(())? };
         child_task.is_child_task = true;
 
@@ -858,9 +859,9 @@ impl Task {
         child_task.parent = Some(main_task_ptr as *mut Task);
 
         let cdata = unsafe { child_task.data.get().as_mut().unwrap() };
-        // 分配子线程的trapframe
+        // 与主线程共享同一地址空间
         cdata.pagetable = main_task_data.pagetable.clone();
-
+        // 分配子线程的trapframe
         let ctrapframe = unsafe { RawSinglePage::try_new_zeroed().unwrap() as usize };
         match unsafe { cdata.pagetable.unwrap().as_mut().unwrap() }.map_pages(
             VirtAddr::from(trapframe_from_tid(child_tid)),
@@ -874,29 +875,26 @@ impl Task {
             }
         };
         cdata.trapframe = ctrapframe as _;
-
+        
+        // copy from main task
         cdata.size = main_task_data.size;
-
         cdata.open_files.clone_from(&main_task_data.open_files);
         cdata.cwd.clone_from(&main_task_data.cwd);
-
-        // copy main thread name
         cdata.name.copy_from_slice(&main_task_data.name);
 
-        debug_assert!(cdata.pagetable == main_task_data.pagetable);
         let mut cexcl = child_task.excl.lock();
         let child_tid = cexcl.tid;
         cexcl.state = TaskState::RUNNABLE;
 
-        // 准备ustack
+        
         let ustack_base = cdata.ustack_base;
         cdata.ustack_base = ustack_base;
+        // 准备TrapFrame
         let ctrapframe = unsafe { cdata.trapframe.as_mut().unwrap() };
         ctrapframe.a0 = arg;
         ctrapframe.epc = entry;
         ctrapframe.sp = ustack_bottom_by_pos(ustack_base, pos) + USER_STACK_SIZE;
-        // set context
-        cdata.init_context();
+
 
         drop(cexcl);
         drop(cdata);
