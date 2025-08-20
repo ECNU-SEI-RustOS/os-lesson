@@ -518,6 +518,7 @@ impl TaskManager {
             task.excl.lock().cleanup();
             task.parent = None;
             task.is_child_task = false;
+            task.semaphore_list.lock().clear();
         }
         while let Some(sem) = exiting_task.semaphore_list.lock().pop() {
             drop(sem);

@@ -1,6 +1,7 @@
 use crate::{process::{Task}, spinlock::SpinLock};
 use alloc::collections::VecDeque;
-
+use crate::process::PROC_MANAGER;
+use crate::process::CPU_MANAGER;
 pub struct Semaphore {
     pub inner: SpinLock<SemaphoreInner>
 }
@@ -28,26 +29,22 @@ impl Semaphore {
     pub fn up(&self) {
         let mut inner = self.inner.lock();
         inner.count += 1;
-        // if inner.count <= 0 {
-        //     if let Some(task) = inner.wait_queue.pop_front() {
-        //         unsafe { PROC_MANAGER.task_wakeup(task as _) };
-        //     }
-        // }
+        if inner.count <= 0 {
+            if let Some(task) = inner.wait_queue.pop_front() {
+                unsafe { PROC_MANAGER.task_wakeup(task as _) };
+            }
+        }
     }
 
     pub fn down(&self) {
         let mut inner = self.inner.lock();
         inner.count -= 1;
         while inner.count < 0 {
-            // let task =  unsafe { CPU_MANAGER.my_task() as *const Task};
-            // inner.wait_queue.push_back(task);
-            // drop(inner);
-            // let mut parent_map = unsafe { PROC_MANAGER.parents.lock() };
-                        
-            // let channel = task as usize;
-            // let task = unsafe { task.as_ref().unwrap() };
-            // task.sleep(channel, parent_map);
-            drop(inner);
+            let task =  unsafe { CPU_MANAGER.my_task() as *const Task};
+            inner.wait_queue.push_back(task);  
+            let channel = task as usize;
+            let task = unsafe { task.as_ref().unwrap() };
+            task.sleep(channel, inner);
             inner = self.inner.lock();
         }
     }

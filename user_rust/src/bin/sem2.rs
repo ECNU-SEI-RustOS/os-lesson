@@ -9,16 +9,16 @@ use user_rust_lib::task::sleep;
 use core::ptr::addr_of_mut;
 #[macro_use]
 extern crate user_rust_lib;
-static mut COUNTER: u32 = 0;
+static mut COUNTER: isize = 0;
 const SEM_SYNC: usize = 0;
 fn first(arg:usize){
     let a = addr_of_mut!(COUNTER);
     let mut b = 0;
-    for i in 0..1000{
+    for i in 0..10000{
         b += i;
-        sys_semaphore_down(SEM_SYNC);
-        unsafe { a.write_volatile( *a +1 ); }
-        sys_semaphore_up(SEM_SYNC);
+        //sys_semaphore_down(SEM_SYNC);
+        unsafe { a.add(1); }
+        //sys_semaphore_up(SEM_SYNC);
     }
 
     exit(0)
@@ -27,11 +27,11 @@ fn first(arg:usize){
 fn second(arg:usize){
     let a = addr_of_mut!(COUNTER);
     let mut b = 0;
-    for i in 0..1000{
+    for i in 0..10000{
         b += i;
-        sys_semaphore_down(SEM_SYNC);
-        unsafe { a.write_volatile( *a + 1 ); }
-        sys_semaphore_up(SEM_SYNC);
+        //sys_semaphore_down(SEM_SYNC);
+        unsafe { a.add(1); }
+        //sys_semaphore_up(SEM_SYNC);
     }
     exit(0)
 }
@@ -40,7 +40,7 @@ fn second(arg:usize){
 fn main(argc:usize, argv:&[&str]) -> i32 {
     assert_eq!(sys_semaphore_create(1) as usize, SEM_SYNC);
     // create threads
-    println!("count:{}",unsafe { COUNTER });
+
     let tid1 = thread_create(first, 17);
     let tid2 = thread_create(second, 17);
 
