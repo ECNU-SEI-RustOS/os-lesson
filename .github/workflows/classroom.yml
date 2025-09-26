@@ -1,0 +1,51 @@
+name: Autograding (xv6-rust, lab-util)
+
+on:
+  push:
+    branches: [lab-util]
+  pull_request:
+    branches: [lab-util]
+  workflow_dispatch: {}
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 按你要求安装系统依赖
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git gcc-riscv64-unknown-elf qemu-system-misc
+
+      # 安装 nightly，并确保后续 rustup 指向 nightly
+      - name: Setup Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      # 安装 llvm-tools 与 cargo-binutils（含 rust-objcopy 等）
+      - name: Install llvm-tools & cargo-binutils
+        run: |
+          rustup component add --toolchain nightly llvm-tools || rustup component add --toolchain nightly llvm-tools-preview
+          cargo install cargo-binutils
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # 直接执行你的评测命令
+      - name: Run grading
+        run: make grade
+
+      # 可选：上传日志/产物，方便你和学生排查
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            logs/**
+            **/*.log
+            **/test-*.txt
+            xv6.out
+          if-no-files-found: ignore
